@@ -206,6 +206,7 @@ def inference_main(  # TODO: re-write
     cutoff = config[KEY.CUTOFF]
     type_map = config[KEY.TYPE_MAP]
 
+    print(f'fnames is {fnames}')
     head = os.path.basename(fnames[0])
     atoms_list = None
     inference_set = None
@@ -213,6 +214,7 @@ def inference_main(  # TODO: re-write
     if head.endswith('sevenn_data'):
         inference_set = load_sevenn_data(fnames, cutoff, type_map)
         on_the_fly_graph_build = False
+
     else:
         if head.startswith('POSCAR'):
             atoms_list = poscars_to_atoms(fnames)
@@ -223,6 +225,8 @@ def inference_main(  # TODO: re-write
             atoms_list = []
             for fname in fnames:
                 atoms_list.extend(io.read(fname, index=':'))
+                print(atoms_list)
+
 
     if not on_the_fly_graph_build:  # old code
         from torch_geometric.loader import DataLoader
