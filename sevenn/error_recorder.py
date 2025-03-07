@@ -371,7 +371,7 @@ class ErrorRecorder:
                 metrics.append((stress_metric, config[KEY.STRESS_WEIGHT]))
         else:
             for efs in ['Energy', 'Force', 'Stress']:
-                if efs == 'stress' and not is_stress:
+                if efs == 'Stress' and not is_stress:
                     continue
                 lf, w = _get_loss_function_from_name(loss_functions, efs)
                 if lf is None:
