@@ -4,6 +4,7 @@ import warnings
 from collections import OrderedDict
 from typing import Any, Dict, List, Literal, Tuple, Type, Union, overload
 
+from e3nn.io import CartesianTensor
 from e3nn.o3 import Irreps
 
 import sevenn._const as _const
@@ -567,8 +568,14 @@ def build_E3_equivariant_model(
             parity_mode = 'full'
             fix_multiplicity = False
             if t == num_convolution_layer - 1:
-                lmax_node = 0
-                parity_mode = 'even'
+                # If training BEC, we need vectors/tensors to survive the last layer
+                if config.get(KEY.IS_TRAIN_BEC, False):
+                    # We need at least L=1 and L=2 for vectors and tensors.
+                    lmax_node = max(lmax_node, 2)
+                    parity_mode = 'full'
+                else:
+                    lmax_node = 0
+                    parity_mode = 'even'
             # TODO: irreps_manual is applicable to both irreps_out_tp and irreps_out
             irreps_out = (
                 util.infer_irreps_out(
@@ -598,6 +605,20 @@ def build_E3_equivariant_model(
         )
         layers.update(interaction_builder(**param_interaction_block))
         irreps_x = irreps_out
+
+    if config.get(KEY.IS_TRAIN_BEC, False):
+        irreps_in_bec = irreps_x
+        layers.update(
+            {
+                'predict_bec': IrrepsLinear(
+                    irreps_in_bec,
+                    Irreps('1x0e+1x1e+1x2e'),
+                    data_key_in=KEY.NODE_FEATURE,
+                    data_key_out=KEY.PRED_BORN_EFFECTIVE_CHARGES,
+                    biases=config[KEY.USE_BIAS_IN_LINEAR],
+                )
+            }
+        )
 
     layers.update(init_feature_reduce(config, irreps_x))  # type: ignore
 

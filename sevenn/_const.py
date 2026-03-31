@@ -18,13 +18,21 @@ IMPLEMENTED_INTERACTION_TYPE = ['nequip']
 IMPLEMENTED_SHIFT = ['per_atom_energy_mean', 'elemwise_reference_energies']
 IMPLEMENTED_SCALE = ['force_rms', 'per_atom_energy_std', 'elemwise_force_rms']
 
-SUPPORTING_METRICS = ['RMSE', 'ComponentRMSE', 'MAE', 'Loss']
+SUPPORTING_METRICS = [
+    'RMSE',
+    'ComponentRMSE',
+    'MAE',
+    'Loss',
+    'DiagRMSE',
+    'OffDiagRMSE'
+]
 SUPPORTING_ERROR_TYPES = [
     'TotalEnergy',
     'Energy',
     'Force',
     'Stress',
     'Stress_GPa',
+    'BornEffectiveCharges',
     'TotalLoss',
 ]
 
@@ -256,8 +264,10 @@ DEFAULT_TRAINING_CONFIG = {
     KEY.OPTIM_PARAM: {},
     KEY.SCHEDULER: 'exponentiallr',
     KEY.SCHEDULER_PARAM: {},
+    KEY.ENERGY_WEIGHT: 1.0,
     KEY.FORCE_WEIGHT: 0.1,
     KEY.STRESS_WEIGHT: 1e-6,  # SIMPLE-NN default
+    KEY.BEC_WEIGHT: 1.0,
     KEY.PER_EPOCH: 5,
     # KEY.USE_TESTSET: False,
     KEY.CONTINUE: {
@@ -272,6 +282,7 @@ DEFAULT_TRAINING_CONFIG = {
     KEY.CSV_LOG: 'log.csv',
     KEY.NUM_WORKERS: 0,
     KEY.IS_TRAIN_STRESS: True,
+    KEY.IS_TRAIN_BEC: False,
     KEY.TRAIN_SHUFFLE: True,
     KEY.ERROR_RECORD: [
         ['Energy', 'RMSE'],
@@ -288,8 +299,10 @@ DEFAULT_TRAINING_CONFIG = {
 TRAINING_CONFIG_CONDITION = {
     KEY.RANDOM_SEED: int,
     KEY.EPOCH: int,
+    KEY.ENERGY_WEIGHT: float,
     KEY.FORCE_WEIGHT: float,
     KEY.STRESS_WEIGHT: float,
+    KEY.BEC_WEIGHT: float,
     KEY.USE_TESTSET: None,  # Not used
     KEY.NUM_WORKERS: int,
     KEY.PER_EPOCH: int,
@@ -303,6 +316,7 @@ TRAINING_CONFIG_CONDITION = {
     },
     KEY.DEFAULT_MODAL: str,
     KEY.IS_TRAIN_STRESS: bool,
+    KEY.IS_TRAIN_BEC: bool,
     KEY.TRAIN_SHUFFLE: bool,
     KEY.ERROR_RECORD: error_record_condition,
     KEY.BEST_METRIC: str,
@@ -313,9 +327,37 @@ TRAINING_CONFIG_CONDITION = {
 
 
 def train_defaults(config):
-    defaults = DEFAULT_TRAINING_CONFIG
+    defaults = DEFAULT_TRAINING_CONFIG.copy()
     if KEY.IS_TRAIN_STRESS not in config:
         config[KEY.IS_TRAIN_STRESS] = defaults[KEY.IS_TRAIN_STRESS]
     if not config[KEY.IS_TRAIN_STRESS]:
         defaults.pop(KEY.STRESS_WEIGHT, None)
+
+    if KEY.IS_TRAIN_BEC not in config:
+        config[KEY.IS_TRAIN_BEC] = defaults[KEY.IS_TRAIN_BEC]
+
+    # Automatically add BEC metrics if enabled and default err record
+    if config[KEY.IS_TRAIN_BEC]:
+        # If the user didn't explicitly provide an ERROR_RECORD, or if they provided
+        # the default one, we append the BEC Diag/OffDiag metrics automatically
+        current_err = config.get(KEY.ERROR_RECORD, defaults[KEY.ERROR_RECORD])
+        if type(current_err) is list:
+            new_err = [list(e) for e in current_err]
+            if not any(e[0] == 'BornEffectiveCharges' for e in new_err):
+                # Insert before TotalLoss
+                total_loss_idx = len(new_err)
+                for i, e in enumerate(new_err):
+                    if e[0] == 'TotalLoss':
+                        total_loss_idx = i
+                        break
+                new_err.insert(
+                    total_loss_idx, ['BornEffectiveCharges', 'DiagRMSE']
+                )
+                new_err.insert(
+                    total_loss_idx + 1, ['BornEffectiveCharges', 'OffDiagRMSE']
+                )
+            config[KEY.ERROR_RECORD] = new_err
+    else:
+        defaults.pop(KEY.BEC_WEIGHT, None)
+
     return defaults

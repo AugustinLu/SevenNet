@@ -183,6 +183,7 @@ class SevenNetCalculator(Calculator):
             'forces',
             'stress',
             'energies',
+            'born_effective_charges',
         ]
 
     def set_atoms(self, atoms: Atoms) -> None:
@@ -207,7 +208,7 @@ class SevenNetCalculator(Calculator):
             .numpy()[[0, 1, 2, 4, 5, 3]]  # as voigt notation
         )
         # Store results
-        return {
+        res = {
             'free_energy': energy,
             'energy': energy,
             'energies': atomic_energies,
@@ -215,6 +216,25 @@ class SevenNetCalculator(Calculator):
             'stress': stress,
             'num_edges': output[KEY.EDGE_IDX].shape[1],
         }
+
+        if KEY.PRED_BORN_EFFECTIVE_CHARGES in output:
+            if getattr(self, '_ct', None) is None:
+                from e3nn.io import CartesianTensor
+                self._ct = CartesianTensor('ij')
+                self._rtp = self._ct.reduced_tensor_products()
+
+            ct = self._ct
+            rtp = self._rtp
+            pred_bec_irreps = output[KEY.PRED_BORN_EFFECTIVE_CHARGES].detach().cpu()
+
+            # Convert 9-component irreps (1x0e+1x1e+1x2e) to 3x3 Cartesian tensors
+            pred_bec_cartesian = ct.to_cartesian(
+                pred_bec_irreps, rtp.to(pred_bec_irreps.device)
+            )
+
+            res['born_effective_charges'] = pred_bec_cartesian.numpy()[:num_atoms]
+
+        return res
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         is_ts_type = isinstance(self.model, torch_script_type)

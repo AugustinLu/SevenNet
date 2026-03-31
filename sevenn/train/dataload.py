@@ -160,6 +160,7 @@ def atoms_to_graph(
         y_energy = atoms.info['y_energy']
         y_force = atoms.arrays['y_force']
         y_stress = atoms.info.get('y_stress', np.full((6,), np.nan))
+        y_bec = atoms.arrays.get('y_bec', np.full((len(atoms), 3, 3), np.nan))
         if y_stress.shape == (3, 3):
             y_stress = np.array(
                 [
@@ -178,10 +179,15 @@ def atoms_to_graph(
         y_energy = from_calc['energy']
         y_force = from_calc['force']
         y_stress = from_calc['stress']
+        y_bec = from_calc['born_effective_charges']
     assert y_stress.shape == (6,), 'If you see this, please raise a issue'
 
     if not allow_unlabeled and (np.isnan(y_energy) or np.isnan(y_force).any()):
         raise ValueError('Unlabeled E or F found, set allow_unlabeled True')
+
+    if y_bec.shape == (len(atoms), 9):
+        y_bec = y_bec.reshape((len(atoms), 3, 3))
+    assert y_bec.shape == (len(atoms), 3, 3), 'If you see this, please raise a issue'
 
     pos = atoms.get_positions()
     cell = np.array(atoms.get_cell())
@@ -204,6 +210,7 @@ def atoms_to_graph(
         KEY.CELL_VOLUME: _correct_scalar(atoms.cell.volume),
         KEY.NUM_ATOMS: _correct_scalar(len(atomic_numbers)),
         KEY.PER_ATOM_ENERGY: _correct_scalar(y_energy / len(pos)),
+        KEY.BORN_EFFECTIVE_CHARGES: y_bec,
     }
 
     if with_shift:
@@ -274,6 +281,7 @@ def _y_from_calc(atoms: ase.Atoms):
         'energy': np.nan,
         'force': np.full((len(atoms), 3), np.nan),
         'stress': np.full((6,), np.nan),
+        'born_effective_charges': np.full((len(atoms), 3, 3), np.nan),
     }
 
     if atoms.calc is None:
@@ -294,6 +302,14 @@ def _y_from_calc(atoms: ase.Atoms):
         ret['stress'] = np.array(y_stress[[0, 1, 2, 5, 3, 4]])
     except RuntimeError:
         pass
+
+    try:
+        ret['born_effective_charges'] = atoms.calc.results.get(
+            'born_effective_charges', np.full((len(atoms), 3, 3), np.nan)
+        )
+    except AttributeError:
+        pass
+
     return ret
 
 
@@ -302,11 +318,12 @@ def _set_atoms_y(
     energy_key: Optional[str] = None,
     force_key: Optional[str] = None,
     stress_key: Optional[str] = None,
+    bec_key: Optional[str] = None,
 ) -> List[ase.Atoms]:
     """
     Define how SevenNet reads ASE.atoms object for its y label
-    If energy_key, force_key, or stress_key is given, the corresponding
-    label is obtained from .info dict of Atoms object. These values should
+    If energy_key, force_key, stress_key, or bec_key is given, the corresponding
+    label is obtained from .info or .arrays dict of Atoms object. These values should
     have eV, eV/Angstrom, and eV/Angstrom^3 for energy, force, and stress,
     respectively. (stress in Voigt notation)
 
@@ -315,6 +332,7 @@ def _set_atoms_y(
         energy_key (str, optional): key to get energy. Defaults to None.
         force_key (str, optional): key to get force. Defaults to None.
         stress_key (str, optional): key to get stress. Defaults to None.
+        bec_key (str, optional): key to get born effective charges. Defaults to None.
 
     Returns:
         list[ase.Atoms]: list of ase.Atoms
@@ -345,6 +363,13 @@ def _set_atoms_y(
         else:
             atoms.info['y_stress'] = from_calc['stress']
 
+        if bec_key is not None:
+            atoms.arrays['y_bec'] = atoms.arrays.pop(bec_key)
+        elif 'born_effective_charges' in atoms.arrays:
+            atoms.arrays['y_bec'] = atoms.arrays.pop('born_effective_charges')
+        else:
+            atoms.arrays['y_bec'] = from_calc['born_effective_charges']
+
     return atoms_list
 
 
@@ -353,6 +378,7 @@ def ase_reader(
     energy_key: Optional[str] = None,
     force_key: Optional[str] = None,
     stress_key: Optional[str] = None,
+    bec_key: Optional[str] = None,
     index: str = ':',
     **kwargs,
 ) -> List[ase.Atoms]:
@@ -363,7 +389,7 @@ def ase_reader(
     if not isinstance(atoms_list, list):
         atoms_list = [atoms_list]
 
-    return _set_atoms_y(atoms_list, energy_key, force_key, stress_key)
+    return _set_atoms_y(atoms_list, energy_key, force_key, stress_key, bec_key)
 
 
 # Reader

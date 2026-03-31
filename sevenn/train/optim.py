@@ -20,4 +20,4 @@ scheduler_dict = {
     'linearlr': scheduler.LinearLR,
 }
 
-loss_dict = {'mse': nn.MSELoss, 'huber': nn.HuberLoss}
+loss_dict = {'mse': nn.MSELoss, 'huber': nn.HuberLoss, 'mae': nn.L1Loss}

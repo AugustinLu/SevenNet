@@ -201,6 +201,77 @@ class StressLoss(LossDefinition):
         return pred, ref, w_tensor
 
 
+class BECLoss(LossDefinition):
+    """
+    Loss for Born Effective Charges
+    """
+
+    def __init__(
+        self,
+        name: str = 'BornEffectiveCharges',
+        unit: str = 'e',
+        criterion: Optional[Callable] = None,
+        ref_key: str = KEY.BORN_EFFECTIVE_CHARGES,
+        pred_key: str = KEY.PRED_BORN_EFFECTIVE_CHARGES,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            name=name,
+            unit=unit,
+            criterion=criterion,
+            ref_key=ref_key,
+            pred_key=pred_key,
+            **kwargs,
+        )
+
+    def _get_cartesian_tensor(self) -> Any:
+        if getattr(self, '_ct', None) is None:
+            import e3nn.io
+            from e3nn.io import CartesianTensor
+            self._ct = CartesianTensor('ij')
+            self._rtp = self._ct.reduced_tensor_products()
+        return self._ct, self._rtp
+
+    def _preprocess(
+        self, batch_data: Dict[str, Any], model: Optional[Callable] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        assert isinstance(self.pred_key, str) and isinstance(self.ref_key, str)
+
+        # pred is 9 components (1x0e+1x1e+1x2e irreps format)
+        pred = batch_data[self.pred_key]
+
+        # ref is Cartesian tensor 3x3 format (or 9 flat cartesian)
+        ref_cartesian = batch_data[self.ref_key]
+        if ref_cartesian.shape[-1] == 9 and ref_cartesian.dim() == 2:
+            ref_cartesian = ref_cartesian.reshape(-1, 3, 3)
+
+        # Convert true cartesian to irreps format (N, 9)
+        ct, rtp = self._get_cartesian_tensor()
+        ref_irreps = ct.from_cartesian(ref_cartesian, rtp.to(ref_cartesian.device))
+
+        pred = torch.reshape(pred, (-1,))
+        ref = torch.reshape(ref_irreps, (-1,))
+        w_tensor = None
+
+        if self.use_weight:
+            loss_type = self.name.lower()
+            weight = batch_data[KEY.DATA_WEIGHT][loss_type]
+            w_tensor = weight[batch_data[KEY.BATCH]]
+            w_tensor = torch.repeat_interleave(w_tensor, 9)
+
+        return pred, ref, w_tensor
+
+    def get_loss(self, batch_data: Dict[str, Any], model: Optional[Callable] = None):
+        """
+        Function that return scalar.
+        Overridden for BECLoss to compensate for 9-component flattening.
+        Flattening divides the mean loss by N*9 instead of N. We multiply by 9
+        to restore per-atom loss scaling, ensuring consistent gradient magnitudes.
+        """
+        loss = super().get_loss(batch_data, model)
+        return loss * 9.0
+
+
 def get_loss_functions_from_config(
     config: Dict[str, Any],
 ) -> List[Tuple[LossDefinition, float]]:
@@ -218,10 +289,14 @@ def get_loss_functions_from_config(
 
     commons = {'use_weight': use_weight}
 
-    loss_functions.append((PerAtomEnergyLoss(**commons), 1.0))
+    loss_functions.append(
+        (PerAtomEnergyLoss(**commons), config.get(KEY.ENERGY_WEIGHT, 1.0))
+    )
     loss_functions.append((ForceLoss(**commons), config[KEY.FORCE_WEIGHT]))
     if config[KEY.IS_TRAIN_STRESS]:
         loss_functions.append((StressLoss(**commons), config[KEY.STRESS_WEIGHT]))
+    if config.get(KEY.IS_TRAIN_BEC, False):
+        loss_functions.append((BECLoss(**commons), config[KEY.BEC_WEIGHT]))
 
     for loss_function, _ in loss_functions:  # why do these?
         if loss_function.criterion is None:
