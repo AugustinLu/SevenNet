@@ -484,8 +484,12 @@ class ErrorRecorder:
                 stress_metric = CustomError(criteria, **get_err_type('Stress'))
                 metrics.append((stress_metric, config[KEY.STRESS_WEIGHT]))
         else:  # TODO: this is hard-coded
-            for efs in ['Energy', 'Force', 'Stress']:
+            for efs in ['Energy', 'Force', 'Stress', 'BornEffectiveCharges']:
                 if efs == 'Stress' and not is_stress:
+                    continue
+                if efs == 'BornEffectiveCharges' and not config.get(
+                    KEY.IS_TRAIN_BEC, False
+                ):
                     continue
                 lf, w = _get_loss_function_from_name(loss_functions, efs)
                 if lf is None:
