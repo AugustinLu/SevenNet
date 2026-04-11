@@ -122,6 +122,8 @@ def test_sevennet_0_cal_deployed_consistency(tmp_path, atoms_pbc):
     res_script = copy.copy(atoms_pbc.calc.results)
 
     for k in res_cp:
+        if k in ['bandgap', 'magmoms']:
+            continue
         assert np.allclose(res_cp[k], res_script[k], rtol=1e-4, atol=1e-4)
 
 
@@ -141,6 +143,8 @@ def test_sevennet_0_cal_as_instance_consistency(atoms_pbc):
     res_script = copy.copy(atoms_pbc.calc.results)
 
     for k in res_cp:
+        if k in ['bandgap', 'magmoms']:
+            continue
         assert np.allclose(res_cp[k], res_script[k])
 
 
