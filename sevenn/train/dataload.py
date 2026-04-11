@@ -206,6 +206,11 @@ def atoms_to_graph(
         KEY.PER_ATOM_ENERGY: _correct_scalar(y_energy / len(pos)),
     }
 
+    if 'y_bandgap' in atoms.info:
+        data[KEY.BANDGAP] = _correct_scalar(atoms.info['y_bandgap'])
+    if 'y_magmoms' in atoms.arrays:
+        data[KEY.MAGMOMS] = atoms.arrays['y_magmoms']
+
     if with_shift:
         data[KEY.CELL_SHIFT] = shift
         data[KEY.CELL] = cell
@@ -302,6 +307,8 @@ def _set_atoms_y(
     energy_key: Optional[str] = None,
     force_key: Optional[str] = None,
     stress_key: Optional[str] = None,
+    bandgap_key: Optional[str] = 'bandgap',
+    magmoms_key: Optional[str] = 'magmoms',
 ) -> List[ase.Atoms]:
     """
     Define how SevenNet reads ASE.atoms object for its y label
@@ -344,6 +351,11 @@ def _set_atoms_y(
             atoms.info['y_stress'] = np.array(y_stress[[0, 1, 2, 5, 3, 4]])
         else:
             atoms.info['y_stress'] = from_calc['stress']
+
+        if bandgap_key and bandgap_key in atoms.info:
+            atoms.info['y_bandgap'] = atoms.info[bandgap_key]
+        if magmoms_key and magmoms_key in atoms.arrays:
+            atoms.arrays['y_magmoms'] = atoms.arrays[magmoms_key]
 
     return atoms_list
 

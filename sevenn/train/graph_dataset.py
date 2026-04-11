@@ -65,7 +65,10 @@ def _run_stat(
     """
     Loop over dataset and init any statistics might need
     """
-    y_keys = y_keys or [KEY.ENERGY, KEY.PER_ATOM_ENERGY, KEY.FORCE, KEY.STRESS]
+    y_keys = y_keys or [
+        KEY.ENERGY, KEY.PER_ATOM_ENERGY, KEY.FORCE, KEY.STRESS,
+        KEY.BANDGAP, KEY.MAGMOMS
+    ]
     n_neigh = []
     natoms_counter = Counter()
     composition = torch.zeros((len(graph_list), NUM_UNIV_ELEMENT))
@@ -79,14 +82,18 @@ def _run_stat(
         composition[i] = torch.bincount(z_tensor, minlength=NUM_UNIV_ELEMENT)
         n_neigh.append(torch.unique(graph[KEY.EDGE_IDX][0], return_counts=True)[1])
         for y, dct in stats.items():
-            dct['_array'].append(
-                graph[y].reshape(
-                    -1,
+            if y in graph:
+                dct['_array'].append(
+                    graph[y].reshape(
+                        -1,
+                    )
                 )
-            )
 
     stats.update({'num_neighbor': {'_array': n_neigh}})
-    for y, dct in stats.items():
+    for y, dct in list(stats.items()):
+        if not dct['_array']:
+            del stats[y]
+            continue
         array = torch.cat(dct['_array'])
         if array.dtype == torch.int64:  # because of n_neigh
             array = array.to(torch.float)

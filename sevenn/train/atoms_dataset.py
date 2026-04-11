@@ -182,7 +182,10 @@ class SevenNetAtomsDataset(torch.utils.data.Dataset):
         """
         if self._scanned is True:
             return  # statistics already computed
-        y_keys: List[str] = [KEY.ENERGY, KEY.PER_ATOM_ENERGY, KEY.FORCE, KEY.STRESS]
+        y_keys: List[str] = [
+            KEY.ENERGY, KEY.PER_ATOM_ENERGY, KEY.FORCE, KEY.STRESS,
+            KEY.BANDGAP, KEY.MAGMOMS
+        ]
         natoms_counter = Counter()
         composition = np.zeros((len(self), NUM_UNIV_ELEMENT))
         stats: Dict[str, Dict[str, Any]] = {y: {'_array': []} for y in y_keys}
@@ -202,9 +205,15 @@ class SevenNetAtomsDataset(torch.utils.data.Dataset):
                     dct['_array'].append(atoms.arrays['y_force'].reshape(-1))
                 elif y == KEY.STRESS:
                     dct['_array'].append(atoms.info['y_stress'].reshape(-1))
+                elif y == KEY.BANDGAP and 'y_bandgap' in atoms.info:
+                    dct['_array'].append(atoms.info['y_bandgap'])
+                elif y == KEY.MAGMOMS and 'y_magmoms' in atoms.arrays:
+                    dct['_array'].append(atoms.arrays['y_magmoms'].reshape(-1))
 
         for y, dct in stats.items():
-            if y == KEY.FORCE:
+            if len(dct['_array']) == 0:
+                continue
+            if y in [KEY.FORCE, KEY.MAGMOMS]:
                 array = np.concatenate(dct['_array'])
             else:
                 array = np.array(dct['_array']).reshape(-1)
