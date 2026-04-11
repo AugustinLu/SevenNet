@@ -184,6 +184,8 @@ class SevenNetCalculator(Calculator):
             'stress',
             'energies',
             'born_effective_charges',
+            'band_gap',
+            'magmoms',
         ]
 
     def set_atoms(self, atoms: Atoms) -> None:
@@ -233,6 +235,14 @@ class SevenNetCalculator(Calculator):
             )
 
             res['born_effective_charges'] = pred_bec_cartesian.numpy()[:num_atoms]
+
+        if KEY.PRED_BAND_GAP in output:
+            bg_arr = output[KEY.PRED_BAND_GAP].detach().cpu().numpy()
+            res['band_gap'] = float(bg_arr[0])
+
+        if KEY.PRED_MAGMOMS in output:
+            mag_arr = output[KEY.PRED_MAGMOMS].detach().cpu().numpy()
+            res['magmoms'] = mag_arr[:num_atoms].flatten()
 
         return res
 

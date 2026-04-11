@@ -161,6 +161,9 @@ def atoms_to_graph(
         y_force = atoms.arrays['y_force']
         y_stress = atoms.info.get('y_stress', np.full((6,), np.nan))
         y_bec = atoms.arrays.get('y_bec', np.full((len(atoms), 3, 3), np.nan))
+        y_bg = atoms.info.get('y_band_gap', np.nan)
+        y_magmoms = atoms.arrays.get('y_magmoms', np.full((len(atoms), 1), np.nan))
+
         if y_stress.shape == (3, 3):
             y_stress = np.array(
                 [
@@ -180,6 +183,8 @@ def atoms_to_graph(
         y_force = from_calc['force']
         y_stress = from_calc['stress']
         y_bec = from_calc['born_effective_charges']
+        y_bg = from_calc['band_gap']
+        y_magmoms = from_calc['magmoms']
     assert y_stress.shape == (6,), 'If you see this, please raise a issue'
 
     if not allow_unlabeled and (np.isnan(y_energy) or np.isnan(y_force).any()):
@@ -188,6 +193,9 @@ def atoms_to_graph(
     if y_bec.shape == (len(atoms), 9):
         y_bec = y_bec.reshape((len(atoms), 3, 3))
     assert y_bec.shape == (len(atoms), 3, 3), 'If you see this, please raise a issue'
+
+    if hasattr(y_magmoms, 'shape') and len(y_magmoms.shape) == 1:
+        y_magmoms = y_magmoms.reshape(-1, 1)
 
     pos = atoms.get_positions()
     cell = np.array(atoms.get_cell())
@@ -211,6 +219,8 @@ def atoms_to_graph(
         KEY.NUM_ATOMS: _correct_scalar(len(atomic_numbers)),
         KEY.PER_ATOM_ENERGY: _correct_scalar(y_energy / len(pos)),
         KEY.BORN_EFFECTIVE_CHARGES: y_bec,
+        KEY.BAND_GAP: _correct_scalar(y_bg),
+        KEY.MAGMOMS: y_magmoms,
     }
 
     if with_shift:
@@ -282,6 +292,8 @@ def _y_from_calc(atoms: ase.Atoms):
         'force': np.full((len(atoms), 3), np.nan),
         'stress': np.full((6,), np.nan),
         'born_effective_charges': np.full((len(atoms), 3, 3), np.nan),
+        'band_gap': np.nan,
+        'magmoms': np.full((len(atoms), 1), np.nan),
     }
 
     if atoms.calc is None:
@@ -306,6 +318,10 @@ def _y_from_calc(atoms: ase.Atoms):
     try:
         ret['born_effective_charges'] = atoms.calc.results.get(
             'born_effective_charges', np.full((len(atoms), 3, 3), np.nan)
+        )
+        ret['band_gap'] = atoms.calc.results.get('band_gap', np.nan)
+        ret['magmoms'] = atoms.calc.results.get(
+            'magmoms', np.full((len(atoms), 1), np.nan)
         )
     except AttributeError:
         pass

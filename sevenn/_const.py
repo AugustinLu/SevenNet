@@ -33,6 +33,8 @@ SUPPORTING_ERROR_TYPES = [
     'Stress',
     'Stress_GPa',
     'BornEffectiveCharges',
+    'BandGap',
+    'Magmoms',
     'TotalLoss',
 ]
 
@@ -268,6 +270,8 @@ DEFAULT_TRAINING_CONFIG = {
     KEY.FORCE_WEIGHT: 0.1,
     KEY.STRESS_WEIGHT: 1e-6,  # SIMPLE-NN default
     KEY.BEC_WEIGHT: 1.0,
+    KEY.BAND_GAP_WEIGHT: 1.0,
+    KEY.MAGMOMS_WEIGHT: 1.0,
     KEY.PER_EPOCH: 5,
     # KEY.USE_TESTSET: False,
     KEY.CONTINUE: {
@@ -283,6 +287,8 @@ DEFAULT_TRAINING_CONFIG = {
     KEY.NUM_WORKERS: 0,
     KEY.IS_TRAIN_STRESS: True,
     KEY.IS_TRAIN_BEC: False,
+    KEY.IS_TRAIN_BAND_GAP: False,
+    KEY.IS_TRAIN_MAGMOMS: False,
     KEY.TRAIN_SHUFFLE: True,
     KEY.ERROR_RECORD: [
         ['Energy', 'RMSE'],
@@ -303,6 +309,8 @@ TRAINING_CONFIG_CONDITION = {
     KEY.FORCE_WEIGHT: float,
     KEY.STRESS_WEIGHT: float,
     KEY.BEC_WEIGHT: float,
+    KEY.BAND_GAP_WEIGHT: float,
+    KEY.MAGMOMS_WEIGHT: float,
     KEY.USE_TESTSET: None,  # Not used
     KEY.NUM_WORKERS: int,
     KEY.PER_EPOCH: int,
@@ -317,6 +325,8 @@ TRAINING_CONFIG_CONDITION = {
     KEY.DEFAULT_MODAL: str,
     KEY.IS_TRAIN_STRESS: bool,
     KEY.IS_TRAIN_BEC: bool,
+    KEY.IS_TRAIN_BAND_GAP: bool,
+    KEY.IS_TRAIN_MAGMOMS: bool,
     KEY.TRAIN_SHUFFLE: bool,
     KEY.ERROR_RECORD: error_record_condition,
     KEY.BEST_METRIC: str,
@@ -335,6 +345,10 @@ def train_defaults(config):
 
     if KEY.IS_TRAIN_BEC not in config:
         config[KEY.IS_TRAIN_BEC] = defaults[KEY.IS_TRAIN_BEC]
+    if KEY.IS_TRAIN_BAND_GAP not in config:
+        config[KEY.IS_TRAIN_BAND_GAP] = defaults[KEY.IS_TRAIN_BAND_GAP]
+    if KEY.IS_TRAIN_MAGMOMS not in config:
+        config[KEY.IS_TRAIN_MAGMOMS] = defaults[KEY.IS_TRAIN_MAGMOMS]
 
     # Automatically add BEC metrics if enabled and default err record
     if config[KEY.IS_TRAIN_BEC]:

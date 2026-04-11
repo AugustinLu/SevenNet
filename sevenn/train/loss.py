@@ -201,6 +201,85 @@ class StressLoss(LossDefinition):
         return pred, ref, w_tensor
 
 
+class BandGapLoss(LossDefinition):
+    """
+    Loss for Band Gap (intensive scalar, no N_atoms scaling)
+    """
+    def __init__(
+        self,
+        name: str = 'BandGap',
+        unit: str = 'eV',
+        criterion: Optional[Callable] = None,
+        ref_key: str = KEY.BAND_GAP,
+        pred_key: str = KEY.PRED_BAND_GAP,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            name=name,
+            unit=unit,
+            criterion=criterion,
+            ref_key=ref_key,
+            pred_key=pred_key,
+            **kwargs,
+        )
+
+    def _preprocess(
+        self, batch_data: Dict[str, Any], model: Optional[Callable] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        assert isinstance(self.pred_key, str) and isinstance(self.ref_key, str)
+        # Band gap is a single scalar per graph
+        pred = torch.reshape(batch_data[self.pred_key], (-1,))
+        ref = torch.reshape(batch_data[self.ref_key], (-1,))
+        w_tensor = None
+
+        if self.use_weight:
+            loss_type = self.name.lower()
+            weight = batch_data[KEY.DATA_WEIGHT][loss_type]
+            w_tensor = torch.repeat_interleave(weight, 1)
+
+        return pred, ref, w_tensor
+
+
+class MagmomsLoss(LossDefinition):
+    """
+    Loss for Magnetic Moments (node-level scalar)
+    """
+    def __init__(
+        self,
+        name: str = 'Magmoms',
+        unit: str = 'mu_B',
+        criterion: Optional[Callable] = None,
+        ref_key: str = KEY.MAGMOMS,
+        pred_key: str = KEY.PRED_MAGMOMS,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            name=name,
+            unit=unit,
+            criterion=criterion,
+            ref_key=ref_key,
+            pred_key=pred_key,
+            **kwargs,
+        )
+
+    def _preprocess(
+        self, batch_data: Dict[str, Any], model: Optional[Callable] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        assert isinstance(self.pred_key, str) and isinstance(self.ref_key, str)
+        # Node level scalar
+        pred = torch.reshape(batch_data[self.pred_key], (-1,))
+        ref = torch.reshape(batch_data[self.ref_key], (-1,))
+        w_tensor = None
+
+        if self.use_weight:
+            loss_type = self.name.lower()
+            weight = batch_data[KEY.DATA_WEIGHT][loss_type]
+            w_tensor = weight[batch_data[KEY.BATCH]]
+            w_tensor = torch.repeat_interleave(w_tensor, 1)
+
+        return pred, ref, w_tensor
+
+
 class BECLoss(LossDefinition):
     """
     Loss for Born Effective Charges
@@ -297,6 +376,10 @@ def get_loss_functions_from_config(
         loss_functions.append((StressLoss(**commons), config[KEY.STRESS_WEIGHT]))
     if config.get(KEY.IS_TRAIN_BEC, False):
         loss_functions.append((BECLoss(**commons), config[KEY.BEC_WEIGHT]))
+    if config.get(KEY.IS_TRAIN_BAND_GAP, False):
+        loss_functions.append((BandGapLoss(**commons), config[KEY.BAND_GAP_WEIGHT]))
+    if config.get(KEY.IS_TRAIN_MAGMOMS, False):
+        loss_functions.append((MagmomsLoss(**commons), config[KEY.MAGMOMS_WEIGHT]))
 
     for loss_function, _ in loss_functions:  # why do these?
         if loss_function.criterion is None:

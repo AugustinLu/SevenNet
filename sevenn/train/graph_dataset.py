@@ -71,6 +71,8 @@ def _run_stat(
         KEY.FORCE,
         KEY.STRESS,
         KEY.BORN_EFFECTIVE_CHARGES,
+        KEY.BAND_GAP,
+        KEY.MAGMOMS,
     ]
     n_neigh = []
     natoms_counter = Counter()
@@ -86,8 +88,11 @@ def _run_stat(
         n_neigh.append(torch.unique(graph[KEY.EDGE_IDX][0], return_counts=True)[1])
         for y, dct in stats.items():
             if y in graph and graph[y] is not None:
+                val = graph[y]
+                if not isinstance(val, torch.Tensor):
+                    val = torch.tensor(val)
                 dct['_array'].append(
-                    graph[y].reshape(
+                    val.reshape(
                         -1,
                     )
                 )
