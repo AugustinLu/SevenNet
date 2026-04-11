@@ -620,39 +620,6 @@ def build_E3_equivariant_model(
             }
         )
 
-    if config.get(KEY.IS_TRAIN_MAGMOMS, False):
-        irreps_in_magmoms = irreps_x
-        layers.update(
-            {
-                'predict_magmoms': IrrepsLinear(
-                    irreps_in_magmoms,
-                    Irreps('1x0e'),
-                    data_key_in=KEY.NODE_FEATURE,
-                    data_key_out=KEY.PRED_MAGMOMS,
-                    biases=config[KEY.USE_BIAS_IN_LINEAR],
-                )
-            }
-        )
-
-    if config.get(KEY.IS_TRAIN_BAND_GAP, False):
-        irreps_in_bg = irreps_x
-        layers.update(
-            {
-                'predict_band_gap_node': IrrepsLinear(
-                    irreps_in_bg,
-                    Irreps('1x0e'),
-                    data_key_in=KEY.NODE_FEATURE,
-                    data_key_out='_inferred_band_gap_node',
-                    biases=config[KEY.USE_BIAS_IN_LINEAR],
-                ),
-                'reduce_band_gap': AtomReduce(
-                    data_key_in='_inferred_band_gap_node',
-                    data_key_out=KEY.PRED_BAND_GAP,
-                    reduce='mean',
-                )
-            }
-        )
-
     layers.update(init_feature_reduce(config, irreps_x))  # type: ignore
 
     layers.update(

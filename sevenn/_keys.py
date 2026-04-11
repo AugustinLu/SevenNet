@@ -50,8 +50,6 @@ ENERGY: Final[str] = 'total_energy'  # (1)
 FORCE: Final[str] = 'force_of_atoms'  # (N, 3)
 STRESS: Final[str] = 'stress'  # (6)
 BORN_EFFECTIVE_CHARGES: Final[str] = 'born_effective_charges'  # (N, 3, 3)
-BAND_GAP: Final[str] = 'band_gap'  # (1)
-MAGMOMS: Final[str] = 'magmoms'  # (N, 1)
 
 # This is for training, per atom scale.
 SCALED_ENERGY: Final[str] = 'scaled_total_energy'
@@ -71,8 +69,6 @@ PRED_STRESS: Final[str] = 'inferred_stress'
 SCALED_STRESS: Final[str] = 'scaled_stress'
 
 PRED_BORN_EFFECTIVE_CHARGES: Final[str] = 'inferred_born_effective_charges'
-PRED_BAND_GAP: Final[str] = 'inferred_band_gap'
-PRED_MAGMOMS: Final[str] = 'inferred_magmoms'
 
 # very general data property for AtomGraphData
 NUM_ATOMS: Final[str] = 'num_atoms'  # int
@@ -127,8 +123,6 @@ ENERGY_WEIGHT = 'energy_loss_weight'
 FORCE_WEIGHT = 'force_loss_weight'
 STRESS_WEIGHT = 'stress_loss_weight'
 BEC_WEIGHT = 'bec_loss_weight'
-BAND_GAP_WEIGHT = 'band_gap_loss_weight'
-MAGMOMS_WEIGHT = 'magmoms_loss_weight'
 DEVICE = 'device'
 DTYPE = 'dtype'
 
@@ -136,8 +130,6 @@ TRAIN_SHUFFLE = 'train_shuffle'
 
 IS_TRAIN_STRESS = 'is_train_stress'
 IS_TRAIN_BEC = 'is_train_bec'
-IS_TRAIN_BAND_GAP = 'is_train_band_gap'
-IS_TRAIN_MAGMOMS = 'is_train_magmoms'
 
 CONTINUE = 'continue'
 CHECKPOINT = 'checkpoint'
