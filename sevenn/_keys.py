@@ -49,6 +49,8 @@ EDGE_EMBEDDING: Final[str] = 'edge_embedding'  # (from edge embedding)
 ENERGY: Final[str] = 'total_energy'  # (1)
 FORCE: Final[str] = 'force_of_atoms'  # (N, 3)
 STRESS: Final[str] = 'stress'  # (6)
+BANDGAP: Final[str] = 'bandgap'  # (1)
+MAGMOMS: Final[str] = 'magmoms'  # (N, 1)
 
 # This is for training, per atom scale.
 SCALED_ENERGY: Final[str] = 'scaled_total_energy'
@@ -57,6 +59,11 @@ SCALED_ENERGY: Final[str] = 'scaled_total_energy'
 SCALED_ATOMIC_ENERGY: Final[str] = 'scaled_atomic_energy'
 ATOMIC_ENERGY: Final[str] = 'atomic_energy'
 PRED_TOTAL_ENERGY: Final[str] = 'inferred_total_energy'
+
+ATOMIC_BANDGAP: Final[str] = 'atomic_bandgap'
+PRED_BANDGAP: Final[str] = 'inferred_bandgap'
+
+PRED_MAGMOMS: Final[str] = 'inferred_magmoms'
 
 PRED_PER_ATOM_ENERGY: Final[str] = 'inferred_per_atom_energy'
 PER_ATOM_ENERGY: Final[str] = 'per_atom_energy'
@@ -124,6 +131,10 @@ DTYPE = 'dtype'
 TRAIN_SHUFFLE = 'train_shuffle'
 
 IS_TRAIN_STRESS = 'is_train_stress'
+IS_TRAIN_BANDGAP = 'is_train_bandgap'
+IS_TRAIN_MAGMOMS = 'is_train_magmoms'
+BANDGAP_WEIGHT = 'bandgap_loss_weight'
+MAGMOMS_WEIGHT = 'magmoms_loss_weight'
 
 CONTINUE = 'continue'
 CHECKPOINT = 'checkpoint'

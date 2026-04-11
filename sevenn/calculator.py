@@ -207,7 +207,7 @@ class SevenNetCalculator(Calculator):
             .numpy()[[0, 1, 2, 4, 5, 3]]  # as voigt notation
         )
         # Store results
-        return {
+        results = {
             'free_energy': energy,
             'energy': energy,
             'energies': atomic_energies,
@@ -215,6 +215,13 @@ class SevenNetCalculator(Calculator):
             'stress': stress,
             'num_edges': output[KEY.EDGE_IDX].shape[1],
         }
+        if KEY.PRED_BANDGAP in output:
+            results['bandgap'] = output[KEY.PRED_BANDGAP].detach().cpu().item()
+        if KEY.PRED_MAGMOMS in output:
+            results['magmoms'] = (
+                output[KEY.PRED_MAGMOMS].detach().cpu().numpy()[:num_atoms].flatten()
+            )
+        return results
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         is_ts_type = isinstance(self.model, torch_script_type)

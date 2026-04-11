@@ -599,6 +599,30 @@ def build_E3_equivariant_model(
         layers.update(interaction_builder(**param_interaction_block))
         irreps_x = irreps_out
 
+    layers.update(
+        {
+            'predict_atomic_bandgap': IrrepsLinear(
+                irreps_in=irreps_x,
+                irreps_out=Irreps('1x0e'),
+                data_key_in=KEY.NODE_FEATURE,
+                data_key_out=KEY.ATOMIC_BANDGAP,
+                biases=use_bias_in_linear,
+            ),
+            'reduce_total_bandgap': AtomReduce(
+                data_key_in=KEY.ATOMIC_BANDGAP,
+                data_key_out=KEY.PRED_BANDGAP,
+                reduce='mean',
+            ),
+            'predict_magmoms': IrrepsLinear(
+                irreps_in=irreps_x,
+                irreps_out=Irreps('1x0e'),
+                data_key_in=KEY.NODE_FEATURE,
+                data_key_out=KEY.PRED_MAGMOMS,
+                biases=use_bias_in_linear,
+            ),
+        }
+    )
+
     layers.update(init_feature_reduce(config, irreps_x))  # type: ignore
 
     layers.update(

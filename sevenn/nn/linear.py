@@ -134,9 +134,20 @@ class AtomReduce(nn.Module):
                 device=src.device,
             )
             output.scatter_reduce_(0, data[KEY.BATCH], src, reduce='sum')
+            if self.reduce == 'mean':
+                counts = torch.zeros(size, dtype=src.dtype, device=src.device)
+                ones = torch.ones_like(src)
+                counts.scatter_reduce_(0, data[KEY.BATCH], ones, reduce='sum')
+                counts = counts.clamp(min=1.0)
+                output = output / counts
             data[self.key_output] = output * self.constant
         else:
-            data[self.key_output] = torch.sum(data[self.key_input]) * self.constant
+            if self.reduce == 'mean':
+                v = torch.mean(data[self.key_input]) * self.constant
+                data[self.key_output] = v
+            else:
+                v = torch.sum(data[self.key_input]) * self.constant
+                data[self.key_output] = v
 
         return data
 
