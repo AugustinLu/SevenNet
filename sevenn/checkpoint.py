@@ -348,7 +348,15 @@ class SevenNetCheckpoint:
                 self.model_state_dict, self.config, model
             )
             missing, not_used = model.load_state_dict(state_dict, strict=False)
-            missing = [m for m in missing if not (m.startswith('predict_atomic_bandgap.') or m.startswith('predict_magmoms.') or m.startswith('reduce_total_bandgap.'))]
+            missing = [
+                m
+                for m in missing
+                if not (
+                    m.startswith('predict_atomic_bandgap.')
+                    or m.startswith('predict_magmoms.')
+                    or m.startswith('reduce_total_bandgap.')
+                )
+            ]
             assert len(missing) == 0, f'Missing keys: {missing}'
             if len(not_used) > 0:
                 warnings.warn(f'Some keys are not used: {not_used}', UserWarning)
