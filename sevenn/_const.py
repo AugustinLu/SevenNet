@@ -283,6 +283,7 @@ DEFAULT_TRAINING_CONFIG = {
     KEY.NUM_WORKERS: 0,
     KEY.IS_TRAIN_STRESS: True,
     KEY.IS_TRAIN_BEC: False,
+    KEY.TRAIN_BEC_FROM: 'last',
     KEY.TRAIN_SHUFFLE: True,
     KEY.ERROR_RECORD: [
         ['Energy', 'RMSE'],
@@ -317,6 +318,7 @@ TRAINING_CONFIG_CONDITION = {
     KEY.DEFAULT_MODAL: str,
     KEY.IS_TRAIN_STRESS: bool,
     KEY.IS_TRAIN_BEC: bool,
+    KEY.TRAIN_BEC_FROM: str,
     KEY.TRAIN_SHUFFLE: bool,
     KEY.ERROR_RECORD: error_record_condition,
     KEY.BEST_METRIC: str,
@@ -335,6 +337,12 @@ def train_defaults(config):
 
     if KEY.IS_TRAIN_BEC not in config:
         config[KEY.IS_TRAIN_BEC] = defaults[KEY.IS_TRAIN_BEC]
+
+    if KEY.TRAIN_BEC_FROM not in config:
+        config[KEY.TRAIN_BEC_FROM] = defaults[KEY.TRAIN_BEC_FROM]
+
+    if config[KEY.TRAIN_BEC_FROM] not in ['last', 'penultimate']:
+        raise ValueError(f"train_bec_from must be 'last' or 'penultimate', got {config[KEY.TRAIN_BEC_FROM]}")
 
     # Automatically add BEC metrics if enabled and default err record
     if config[KEY.IS_TRAIN_BEC]:
