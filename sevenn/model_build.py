@@ -635,6 +635,24 @@ def build_E3_equivariant_model(
                     }
                 )
 
+                # If attached at penultimate, we must strip L>0 features from node features
+                # before the final layer. This prevents FlashTP from crashing (which happens
+                # when input has L>0 but output is forced to L=0) and saves significant memory.
+                if train_bec_from == 'penultimate':
+                    irreps_x_scalar = Irreps([(mul, ir) for mul, ir in irreps_x if ir.l == 0])
+                    layers.update(
+                        {
+                            'filter_scalar_features': IrrepsLinear(
+                                irreps_x,
+                                irreps_x_scalar,
+                                data_key_in=KEY.NODE_FEATURE,
+                                data_key_out=KEY.NODE_FEATURE,
+                                biases=config[KEY.USE_BIAS_IN_LINEAR],
+                            )
+                        }
+                    )
+                    irreps_x = irreps_x_scalar
+
     layers.update(init_feature_reduce(config, irreps_x))  # type: ignore
 
     layers.update(
