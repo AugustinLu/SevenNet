@@ -321,6 +321,11 @@ def patch_flash_tp(layers: OrderedDict, config: Dict[str, Any]) -> OrderedDict:
     updates = {}
     for k, module in layers.items():
         if isinstance(module, IrrepsConvolution):
+            # FlashTP crashes with KeyError: 0 when mapping L>0 input directly to purely L=0 output
+            # (which happens in the final layer of a standard SevenNet architecture or penultimate branch).
+            # We explicitly skip patching FlashTP on the final layer if it purely outputs L=0.
+            if module.convolution_kwargs['irreps_out'].lmax == 0 and module.convolution_kwargs['irreps_in1'].lmax > 0:
+                continue
             updates[k] = flash_helper.patch_convolution(module, _flash_lammps)
 
     layers.update(updates)
