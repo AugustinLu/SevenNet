@@ -130,6 +130,7 @@ TRAIN_SHUFFLE = 'train_shuffle'
 
 IS_TRAIN_STRESS = 'is_train_stress'
 IS_TRAIN_BEC = 'is_train_bec'
+TRAIN_BEC_FROM = 'train_bec_from'
 
 CONTINUE = 'continue'
 CHECKPOINT = 'checkpoint'
