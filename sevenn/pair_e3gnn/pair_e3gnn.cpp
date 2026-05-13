@@ -357,7 +357,9 @@ void PairE3GNN::coeff(int narg, char **arg) {
   try {
     model = torch::jit::load(std::string(arg[2]), device, meta_dict);
   } catch (const c10::Error &e) {
-    error->all(FLERR, "error loading the model, check the path of the model");
+    char err_msg[256];
+    snprintf(err_msg, sizeof(err_msg), "error loading the model '%s': %s", arg[2], e.what_without_backtrace());
+    error->all(FLERR, err_msg);
   }
   // model = torch::jit::freeze(model); model is already freezed
 
