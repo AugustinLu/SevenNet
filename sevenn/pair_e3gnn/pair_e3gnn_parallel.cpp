@@ -509,6 +509,16 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
       double fy = (c_yx * efield[0] + c_yy * efield[1] + c_yz * efield[2]) * force->qe2f;
       double fz = (c_zx * efield[0] + c_zy * efield[1] + c_zz * efield[2]) * force->qe2f;
 
+      tagint *tag = atom->tag;
+      if (tag[i] == 1 && print_info) {
+        printf("DEBUG EFIELD (Atom ID 1):\n");
+        printf("  BEC Tensor (Cartesian):\n");
+        printf("    [[%8.4f, %8.4f, %8.4f],\n", c_xx, c_xy, c_xz);
+        printf("     [%8.4f, %8.4f, %8.4f],\n", c_yx, c_yy, c_yz);
+        printf("     [%8.4f, %8.4f, %8.4f]]\n", c_zx, c_zy, c_zz);
+        printf("  E-field forces (eV/A): fx=%8.4f, fy=%8.4f, fz=%8.4f\n", fx, fy, fz);
+      }
+
       f[i][0] += fx;
       f[i][1] += fy;
       f[i][2] += fz;
