@@ -95,6 +95,9 @@ def run(args):
             raise ValueError(f'More than 1 lammps .so files are found: {so_lammps}')
         so_lammps = so_lammps[0]
 
+        # pass the path of flash_dir to lammps as well so it can copy the core .so
+        so_lammps = f'{so_lammps}:{flash_dir}'
+
         print('  - FlashTP support enabled.')
     else:
         flash_dir = None
@@ -103,7 +106,6 @@ def run(args):
     cmd = f'{script} {lammps_dir} {cxx_standard} {d3_support}'
 
     if args.enable_flash:
-        assert osp.isfile(so_lammps)
         cmd += f' {so_lammps}'
     else:
         cmd += ' NONE'
