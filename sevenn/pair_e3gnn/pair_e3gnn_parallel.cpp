@@ -479,6 +479,42 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
     f[i][2] += forces[graph_idx][2];
   }
 
+  if (has_efield && output.contains("inferred_born_effective_charges")) {
+    torch::Tensor bec_tensor =
+        output.at("inferred_born_effective_charges").toTensor().cpu();
+    auto bec = bec_tensor.accessor<float, 2>();
+
+    // Convert 9 components from e3nn (1x0e + 1x1e + 1x2e) to 3x3 cartesian
+    // Irrep indices: 0 (0e), 1,2,3 (1e), 4,5,6,7,8 (2e)
+    for (int graph_idx = 0; graph_idx < graph_indexer; graph_idx++) {
+      int i = graph_index_to_i[graph_idx];
+      float i0 = bec[graph_idx][0];
+      float i1 = bec[graph_idx][1], i2 = bec[graph_idx][2], i3 = bec[graph_idx][3];
+      float i4 = bec[graph_idx][4], i5 = bec[graph_idx][5], i6 = bec[graph_idx][6];
+      float i7 = bec[graph_idx][7], i8 = bec[graph_idx][8];
+
+      float c_xx =  0.57735 * i0 - 0.40825 * i6 - 0.70711 * i8;
+      float c_xy =  0.70711 * i3 + 0.70711 * i5;
+      float c_xz = -0.70711 * i2 + 0.70711 * i4;
+
+      float c_yx = -0.70711 * i3 + 0.70711 * i5;
+      float c_yy =  0.57735 * i0 + 0.81650 * i6;
+      float c_yz =  0.70711 * i1 + 0.70711 * i7;
+
+      float c_zx =  0.70711 * i2 + 0.70711 * i4;
+      float c_zy = -0.70711 * i1 + 0.70711 * i7;
+      float c_zz =  0.57735 * i0 - 0.40825 * i6 + 0.70711 * i8;
+
+      double fx = (c_xx * efield[0] + c_xy * efield[1] + c_xz * efield[2]) * force->qe2f;
+      double fy = (c_yx * efield[0] + c_yy * efield[1] + c_yz * efield[2]) * force->qe2f;
+      double fz = (c_zx * efield[0] + c_zy * efield[1] + c_zz * efield[2]) * force->qe2f;
+
+      f[i][0] += fx;
+      f[i][1] += fy;
+      f[i][2] += fz;
+    }
+  }
+
   if (vflag) {
     auto diag = inp_edge_vec * dE_dr;
     auto s12 = inp_edge_vec.select(1, 0) * dE_dr.select(1, 1);
@@ -635,6 +671,17 @@ void PairE3GNNParallel::coeff(int narg, char **arg) {
 
   // what if unknown chemical specie is in arg? should I abort? is there any use
   // case for that?
+  if (narg > chem_arg_i && strcmp(arg[chem_arg_i], "efield") == 0) {
+    if (narg < chem_arg_i + 4) {
+      error->all(FLERR, "e3gnn/parallel: efield keyword requires 3 values (ex ey ez)");
+    }
+    has_efield = true;
+    efield[0] = std::stod(arg[chem_arg_i + 1]);
+    efield[1] = std::stod(arg[chem_arg_i + 2]);
+    efield[2] = std::stod(arg[chem_arg_i + 3]);
+    chem_arg_i += 4;
+  }
+
   bool found_flag = false;
   int n_chem = narg - chem_arg_i;
   for (int i = 0; i < n_chem; i++) {
@@ -654,6 +701,11 @@ void PairE3GNNParallel::coeff(int narg, char **arg) {
       error->all(FLERR, "Unknown chemical specie is given or the number of "
                         "potential files is not consistent");
     }
+  }
+
+  if (ntypes > n_chem) {
+    error->all(FLERR, "Not enough chemical specie is given. Check pair_coeff "
+                      "and types in your data/script");
   }
 
   for (int i = 1; i <= ntypes; i++) {

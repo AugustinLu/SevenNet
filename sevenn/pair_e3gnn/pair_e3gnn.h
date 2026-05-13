@@ -35,6 +35,9 @@ private:
 
   int nedges_bound = -1;
 
+  bool has_efield = false;
+  double efield[3];
+
 public:
   PairE3GNN(class LAMMPS *);
   ~PairE3GNN();

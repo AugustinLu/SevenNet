@@ -64,6 +64,9 @@ private:
   int sendproc[6];
   int recvproc[6];
 
+  bool has_efield = false;
+  double efield[3];
+
 public:
   PairE3GNNParallel(class LAMMPS *);
   ~PairE3GNNParallel();
