@@ -484,26 +484,33 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
         output.at("inferred_born_effective_charges").toTensor().cpu();
     auto bec = bec_tensor.accessor<float, 2>();
 
-    // Convert 9 components from e3nn (1x0e + 1x1e + 1x2e) to 3x3 cartesian
-    // Irrep indices: 0 (0e), 1,2,3 (1e), 4,5,6,7,8 (2e)
+    // Define mathematically exact constants at compile-time (64-bit precision)
+    constexpr double inv_sqrt3 = 0.57735026918962576; // 1.0 / sqrt(3.0)
+    constexpr double inv_sqrt2 = 0.70710678118654752; // 1.0 / sqrt(2.0)
+    constexpr double inv_sqrt6 = 0.40824829046386302; // 1.0 / sqrt(6.0)
+    constexpr double sqrt2_3   = 0.81649658092772603; // sqrt(2.0 / 3.0)
+
     for (int graph_idx = 0; graph_idx < graph_indexer; graph_idx++) {
       int i = graph_index_to_i[graph_idx];
-      float i0 = bec[graph_idx][0];
-      float i1 = bec[graph_idx][1], i2 = bec[graph_idx][2], i3 = bec[graph_idx][3];
-      float i4 = bec[graph_idx][4], i5 = bec[graph_idx][5], i6 = bec[graph_idx][6];
-      float i7 = bec[graph_idx][7], i8 = bec[graph_idx][8];
 
-      float c_xx =  0.57735 * i0 - 0.40825 * i6 - 0.70711 * i8;
-      float c_xy =  0.70711 * i3 + 0.70711 * i5;
-      float c_xz = -0.70711 * i2 + 0.70711 * i4;
+      // Extract from float tensor and immediately promote to double for all further math
+      double i0 = bec[graph_idx][0];
+      double i1 = bec[graph_idx][1], i2 = bec[graph_idx][2], i3 = bec[graph_idx][3];
+      double i4 = bec[graph_idx][4], i5 = bec[graph_idx][5], i6 = bec[graph_idx][6];
+      double i7 = bec[graph_idx][7], i8 = bec[graph_idx][8];
 
-      float c_yx = -0.70711 * i3 + 0.70711 * i5;
-      float c_yy =  0.57735 * i0 + 0.81650 * i6;
-      float c_yz =  0.70711 * i1 + 0.70711 * i7;
+      // Reconstruct Cartesian tensor directly in double precision
+      double c_xx =  inv_sqrt3 * i0 - inv_sqrt6 * i6 - inv_sqrt2 * i8;
+      double c_xy =  inv_sqrt2 * i3 + inv_sqrt2 * i5;
+      double c_xz = -inv_sqrt2 * i2 + inv_sqrt2 * i4;
 
-      float c_zx =  0.70711 * i2 + 0.70711 * i4;
-      float c_zy = -0.70711 * i1 + 0.70711 * i7;
-      float c_zz =  0.57735 * i0 - 0.40825 * i6 + 0.70711 * i8;
+      double c_yx = -inv_sqrt2 * i3 + inv_sqrt2 * i5;
+      double c_yy =  inv_sqrt3 * i0 + sqrt2_3   * i6;
+      double c_yz =  inv_sqrt2 * i1 + inv_sqrt2 * i7;
+
+      double c_zx =  inv_sqrt2 * i2 + inv_sqrt2 * i4;
+      double c_zy = -inv_sqrt2 * i1 + inv_sqrt2 * i7;
+      double c_zz =  inv_sqrt3 * i0 - inv_sqrt6 * i6 + inv_sqrt2 * i8;
 
       double fx = (c_xx * efield[0] + c_xy * efield[1] + c_xz * efield[2]) * force->qe2f;
       double fy = (c_yx * efield[0] + c_yy * efield[1] + c_yz * efield[2]) * force->qe2f;
