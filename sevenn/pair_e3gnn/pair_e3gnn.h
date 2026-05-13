@@ -31,7 +31,6 @@ private:
   torch::jit::Module model;
   torch::Device device = torch::kCPU;
   int nelements;
-  bool print_info = false;
 
   int nedges_bound = -1;
 
