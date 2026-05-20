@@ -458,7 +458,7 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
     constexpr double inv_sqrt6 = 0.40824829046386302; // 1.0 / sqrt(6.0)
     constexpr double sqrt2_3   = 0.81649658092772603; // sqrt(2.0 / 3.0)
 
-    for (int graph_idx = 0; graph_idx < graph_indexer; graph_idx++) {
+    for (int graph_idx = 0; graph_idx < nlocal; graph_idx++) {
       int i = graph_index_to_i[graph_idx];
 
       // Extract from float tensor and immediately promote to double for all further math
