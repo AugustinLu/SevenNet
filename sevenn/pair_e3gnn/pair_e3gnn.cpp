@@ -31,6 +31,7 @@
 #include "neigh_list.h"
 #include "neigh_request.h"
 #include "neighbor.h"
+#include "update.h"
 
 #include "pair_e3gnn.h"
 
@@ -44,10 +45,6 @@ extern void pair_e3gnn_oeq_register_autograd();
 
 PairE3GNN::PairE3GNN(LAMMPS *lmp) : Pair(lmp) {
   // constructor
-  const char *print_flag = std::getenv("SEVENN_PRINT_INFO");
-  if (print_flag)
-    print_info = true;
-
   std::string device_name;
   if (torch::cuda::is_available()) {
     device = torch::kCUDA;
@@ -280,13 +277,14 @@ void PairE3GNN::compute(int eflag, int vflag) {
       double fy = (c_yx * efield[0] + c_yy * efield[1] + c_yz * efield[2]) * force->qe2f;
       double fz = (c_zx * efield[0] + c_zy * efield[1] + c_zz * efield[2]) * force->qe2f;
 
-      if (tag[i] == 1 && print_info) {
-        printf("DEBUG EFIELD (Atom ID 1):\n");
-        printf("  BEC Tensor (Cartesian):\n");
-        printf("    [[%8.4f, %8.4f, %8.4f],\n", c_xx, c_xy, c_xz);
-        printf("     [%8.4f, %8.4f, %8.4f],\n", c_yx, c_yy, c_yz);
-        printf("     [%8.4f, %8.4f, %8.4f]]\n", c_zx, c_zy, c_zz);
-        printf("  E-field forces (eV/A): fx=%8.4f, fy=%8.4f, fz=%8.4f\n", fx, fy, fz);
+      if (update->ntimestep == update->firststep && tag[i] <= 3 && lmp->logfile) {
+        fprintf(lmp->logfile, "Latest MD Step: %ld\n", static_cast<long>(update->ntimestep));
+        fprintf(lmp->logfile, "Atom %d BEC Tensor (e):\n", static_cast<int>(tag[i]));
+        fprintf(lmp->logfile, "[[ %11.8f  %11.8f  %11.8f]\n", c_xx, c_xy, c_xz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]\n", c_yx, c_yy, c_yz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]]\n", c_zx, c_zy, c_zz);
+        fprintf(lmp->logfile, "Applied E-Field (V/A): [%g  %g  %g]\n", efield[0], efield[1], efield[2]);
+        fprintf(lmp->logfile, "Resulting F_elec (eV/A): [%11.8f %11.8f %11.8f]\n\n", fx, fy, fz);
       }
 
       f[i][0] += fx;

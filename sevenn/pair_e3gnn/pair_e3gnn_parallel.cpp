@@ -39,6 +39,7 @@
 #include "memory.h"
 #include "neigh_list.h"
 #include "neighbor.h"
+#include "update.h"
 // #include "nvToolsExt.h"
 
 #include "pair_e3gnn_parallel.h"
@@ -86,14 +87,7 @@ DeviceBuffManager::~DeviceBuffManager() {
 
 PairE3GNNParallel::PairE3GNNParallel(LAMMPS *lmp) : Pair(lmp) {
   // constructor
-
-  const char *print_flag = std::getenv("SEVENN_PRINT_INFO");
-  const char *print_both_flag = std::getenv("SEVENN_PRINT_BOTH_INFO");
-  if (print_flag) {
-    world_rank = comm->me;
-    std::cout << "process rank: " << world_rank << " initialized" << std::endl;
-    print_info = (world_rank == 0) || print_both_flag;
-  }
+  world_rank = comm->me;
 
   std::string device_name;
   const bool use_gpu = torch::cuda::is_available();
@@ -164,9 +158,6 @@ torch::Device PairE3GNNParallel::get_cuda_device() {
   int rank = comm->me;
   num_gpus = torch::cuda::device_count();
   idx = rank % num_gpus;
-  if (print_info)
-    std::cout << world_rank << " Available # of GPUs found: " << num_gpus
-              << std::endl;
   cudaError_t cuda_err = cudaSetDevice(idx);
   if (cuda_err != cudaSuccess) {
     std::cerr << "E3GNN: Failed to set CUDA device: "
@@ -320,13 +311,6 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
       torch::stack({edge_idx_src_tensor, edge_idx_dst_tensor});
 
   auto inp_edge_vec = torch::from_blob(edge_vec, {nedges, 3}, FLOAT_TYPE);
-  if (print_info) {
-    std::cout << world_rank << " Nlocal: " << nlocal << std::endl;
-    std::cout << world_rank << " Graph_size: " << graph_size << std::endl;
-    std::cout << world_rank << " Ghost_node_num: " << ghost_node_num
-              << std::endl;
-    std::cout << world_rank << " Nedges: " << nedges << "\n" << std::endl;
-  }
 
   // r_original requires grad True
   inp_edge_vec.set_requires_grad(true);
@@ -440,22 +424,6 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
         x_comm, {nlocal, ghost_node_num, extra_size}, 0)[0];
   }
 
-  // postprocessing
-  if (print_info) {
-    size_t free, tot;
-    cudaMemGetInfo(&free, &tot);
-    std::cout << world_rank << " MEM use after backward(MB)" << std::endl;
-    double Mfree = static_cast<double>(free) / (1024 * 1024);
-    double Mtot = static_cast<double>(tot) / (1024 * 1024);
-    std::cout << world_rank << " Total: " << Mtot << std::endl;
-    std::cout << world_rank << " Free: " << Mfree << std::endl;
-    std::cout << world_rank << " Used: " << Mtot - Mfree << std::endl;
-    double Mused = Mtot - Mfree;
-    std::cout << world_rank << " Used/Nedges: " << Mused / nedges << std::endl;
-    std::cout << world_rank << " Used/Nlocal: " << Mused / nlocal << std::endl;
-    std::cout << world_rank << " Used/GraphSize: " << Mused / graph_size << "\n"
-              << std::endl;
-  }
   eng_vdwl += energy_tensor.item<float>(); // accumulate energy
 
   dE_dr = dE_dr.to(torch::kCPU);
@@ -490,7 +458,7 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
     constexpr double inv_sqrt6 = 0.40824829046386302; // 1.0 / sqrt(6.0)
     constexpr double sqrt2_3   = 0.81649658092772603; // sqrt(2.0 / 3.0)
 
-    for (int graph_idx = 0; graph_idx < graph_indexer; graph_idx++) {
+    for (int graph_idx = 0; graph_idx < nlocal; graph_idx++) {
       int i = graph_index_to_i[graph_idx];
 
       // Extract from float tensor and immediately promote to double for all further math
@@ -517,13 +485,14 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
       double fz = (c_zx * efield[0] + c_zy * efield[1] + c_zz * efield[2]) * force->qe2f;
 
       tagint *tag = atom->tag;
-      if (tag[i] == 1 && print_info) {
-        printf("DEBUG EFIELD (Atom ID 1):\n");
-        printf("  BEC Tensor (Cartesian):\n");
-        printf("    [[%8.4f, %8.4f, %8.4f],\n", c_xx, c_xy, c_xz);
-        printf("     [%8.4f, %8.4f, %8.4f],\n", c_yx, c_yy, c_yz);
-        printf("     [%8.4f, %8.4f, %8.4f]]\n", c_zx, c_zy, c_zz);
-        printf("  E-field forces (eV/A): fx=%8.4f, fy=%8.4f, fz=%8.4f\n", fx, fy, fz);
+      if (update->ntimestep == update->firststep && tag[i] <= 3 && lmp->logfile) {
+        fprintf(lmp->logfile, "Latest MD Step: %ld\n", static_cast<long>(update->ntimestep));
+        fprintf(lmp->logfile, "Atom %d BEC Tensor (e):\n", static_cast<int>(tag[i]));
+        fprintf(lmp->logfile, "[[ %11.8f  %11.8f  %11.8f]\n", c_xx, c_xy, c_xz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]\n", c_yx, c_yy, c_yz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]]\n", c_zx, c_zy, c_zz);
+        fprintf(lmp->logfile, "Applied E-Field (V/A): [%g  %g  %g]\n", efield[0], efield[1], efield[2]);
+        fprintf(lmp->logfile, "Resulting F_elec (eV/A): [%11.8f %11.8f %11.8f]\n\n", fx, fy, fz);
       }
 
       f[i][0] += fx;
@@ -887,15 +856,6 @@ int PairE3GNNParallel::pack_forward_comm_gnn(float *buf, int comm_phase) {
       }
     }
   }
-  if (print_info) {
-    std::cout << world_rank << " comm_phase: " << comm_phase << std::endl;
-    std::cout << world_rank << " pack_forward x_dim: " << x_dim << std::endl;
-    std::cout << world_rank << " pack_forward n: " << n << std::endl;
-    std::cout << world_rank << " pack_forward x_dim*n: " << x_dim * n
-              << std::endl;
-    double Msend = static_cast<double>(x_dim * n * 4) / (1024 * 1024);
-    std::cout << world_rank << " send size(MB): " << Msend << "\n" << std::endl;
-  }
   return x_dim * n;
 }
 
@@ -940,14 +900,6 @@ int PairE3GNNParallel::pack_reverse_comm_gnn(float *buf, int comm_phase) {
         buf[m++] = from[j];
       }
     }
-  }
-  if (print_info) {
-    std::cout << world_rank << " comm_phase: " << comm_phase << std::endl;
-    std::cout << world_rank << " pack_reverse x_dim: " << x_dim << std::endl;
-    std::cout << world_rank << " pack_reverse n: " << n << std::endl;
-    std::cout << world_rank << " pack_reverse x_dim*n: " << x_dim * n
-              << std::endl;
-    double Msend = static_cast<double>(x_dim * n * 4) / (1024 * 1024);
   }
   return x_dim * n;
 }

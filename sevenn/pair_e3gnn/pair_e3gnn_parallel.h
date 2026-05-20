@@ -94,7 +94,6 @@ public:
   bool is_comm_preprocess_done();
   void notify_proc_ids(const int *sendproc, const int *recvproc);
 
-  bool print_info = false;
   int world_rank;
 };
 
