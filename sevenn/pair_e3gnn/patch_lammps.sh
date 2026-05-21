@@ -40,13 +40,11 @@ if [ ! -f "${SCRIPT_DIR}/pair_e3gnn.cpp" ]; then
     exit 1
 fi
 
-if [ -f "$flashTP_so" ]; then
+if [ "$flashTP_so" != "NONE" ]; then
     echo "Using flashTP_so: $flashTP_so"
     enable_flashTP=1
-elif [ "$flashTP_so" = "NONE" ]; then
-    echo "[FlashTP] Skipped: not provided"
 else
-    echo "[FlashTP] Skipped: Invalid or missing flashTP_so given"
+    echo "[FlashTP] Skipped: not provided"
     flashTP_so="NONE"
 fi
 
@@ -137,9 +135,16 @@ optional_libs=()
 optional_rpaths=()
 
 if [ "$enable_flashTP" -eq 1 ]; then
+    # split flashTP_so by : to get the lammps.so and flash_dir
+    flashTP_so_file=$(echo $flashTP_so | cut -d':' -f1)
+    flashTP_dir=$(echo $flashTP_so | cut -d':' -f2)
+
     optional_libs+=("    \${CMAKE_CURRENT_LIST_DIR}/flashTP/libflashtp_large_kernel_lammps.so")
     optional_rpaths+=("\${CMAKE_CURRENT_LIST_DIR}/flashTP")
-    mkdir -p $lammps_root/cmake/flashTP && cp $flashTP_so $lammps_root/cmake/flashTP/libflashtp_large_kernel_lammps.so && echo "[FlashTP] flashTP so file copied"
+    mkdir -p $lammps_root/cmake/flashTP
+    cp $flashTP_so_file $lammps_root/cmake/flashTP/libflashtp_large_kernel_lammps.so
+    cp $flashTP_dir/*.so $lammps_root/cmake/flashTP/ 2>/dev/null || true
+    echo "[FlashTP] flashTP so file copied"
 fi
 
 if [ "$enable_oeq" -eq 1 ]; then
