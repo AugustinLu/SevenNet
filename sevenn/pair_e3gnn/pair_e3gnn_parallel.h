@@ -64,6 +64,9 @@ private:
   int sendproc[6];
   int recvproc[6];
 
+  bool has_efield = false;
+  double efield[3];
+
 public:
   PairE3GNNParallel(class LAMMPS *);
   ~PairE3GNNParallel();
@@ -91,7 +94,6 @@ public:
   bool is_comm_preprocess_done();
   void notify_proc_ids(const int *sendproc, const int *recvproc);
 
-  bool print_info = false;
   int world_rank;
 };
 

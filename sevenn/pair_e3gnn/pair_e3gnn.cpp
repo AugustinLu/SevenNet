@@ -31,6 +31,7 @@
 #include "neigh_list.h"
 #include "neigh_request.h"
 #include "neighbor.h"
+#include "update.h"
 
 #include "pair_e3gnn.h"
 
@@ -44,10 +45,6 @@ extern void pair_e3gnn_oeq_register_autograd();
 
 PairE3GNN::PairE3GNN(LAMMPS *lmp) : Pair(lmp) {
   // constructor
-  const char *print_flag = std::getenv("SEVENN_PRINT_INFO");
-  if (print_flag)
-    print_info = true;
-
   std::string device_name;
   if (torch::cuda::is_available()) {
     device = torch::kCUDA;
@@ -243,6 +240,59 @@ void PairE3GNN::compute(int eflag, int vflag) {
     f[i][2] += forces[itag][2];
   }
 
+  if (has_efield && output.contains("inferred_born_effective_charges")) {
+    torch::Tensor bec_tensor =
+        output.at("inferred_born_effective_charges").toTensor().cpu();
+    auto bec = bec_tensor.accessor<float, 2>();
+
+    // Define mathematically exact constants at compile-time (64-bit precision)
+    constexpr double inv_sqrt3 = 0.57735026918962576; // 1.0 / sqrt(3.0)
+    constexpr double inv_sqrt2 = 0.70710678118654752; // 1.0 / sqrt(2.0)
+    constexpr double inv_sqrt6 = 0.40824829046386302; // 1.0 / sqrt(6.0)
+    constexpr double sqrt2_3   = 0.81649658092772603; // sqrt(2.0 / 3.0)
+
+    for (int itag = 0; itag < nlocal; itag++) {
+      int i = tag2i[itag];
+
+      // Extract from float tensor and immediately promote to double for all further math
+      double i0 = bec[itag][0];
+      double i1 = bec[itag][1], i2 = bec[itag][2], i3 = bec[itag][3];
+      double i4 = bec[itag][4], i5 = bec[itag][5], i6 = bec[itag][6];
+      double i7 = bec[itag][7], i8 = bec[itag][8];
+
+      // Reconstruct Cartesian tensor directly in double precision
+      double c_xx =  inv_sqrt3 * i0 - inv_sqrt6 * i6 - inv_sqrt2 * i8;
+      double c_xy =  inv_sqrt2 * i3 + inv_sqrt2 * i5;
+      double c_xz = -inv_sqrt2 * i2 + inv_sqrt2 * i4;
+
+      double c_yx = -inv_sqrt2 * i3 + inv_sqrt2 * i5;
+      double c_yy =  inv_sqrt3 * i0 + sqrt2_3   * i6;
+      double c_yz =  inv_sqrt2 * i1 + inv_sqrt2 * i7;
+
+      double c_zx =  inv_sqrt2 * i2 + inv_sqrt2 * i4;
+      double c_zy = -inv_sqrt2 * i1 + inv_sqrt2 * i7;
+      double c_zz =  inv_sqrt3 * i0 - inv_sqrt6 * i6 + inv_sqrt2 * i8;
+
+      double fx = (c_xx * efield[0] + c_xy * efield[1] + c_xz * efield[2]) * force->qe2f;
+      double fy = (c_yx * efield[0] + c_yy * efield[1] + c_yz * efield[2]) * force->qe2f;
+      double fz = (c_zx * efield[0] + c_zy * efield[1] + c_zz * efield[2]) * force->qe2f;
+
+      if (update->ntimestep == update->firststep && tag[i] <= 3 && lmp->logfile) {
+        fprintf(lmp->logfile, "Latest MD Step: %ld\n", static_cast<long>(update->ntimestep));
+        fprintf(lmp->logfile, "Atom %d BEC Tensor (e):\n", static_cast<int>(tag[i]));
+        fprintf(lmp->logfile, "[[ %11.8f  %11.8f  %11.8f]\n", c_xx, c_xy, c_xz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]\n", c_yx, c_yy, c_yz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]]\n", c_zx, c_zy, c_zz);
+        fprintf(lmp->logfile, "Applied E-Field (V/A): [%g  %g  %g]\n", efield[0], efield[1], efield[2]);
+        fprintf(lmp->logfile, "Resulting F_elec (eV/A): [%11.8f %11.8f %11.8f]\n\n", fx, fy, fz);
+      }
+
+      f[i][0] += fx;
+      f[i][1] += fy;
+      f[i][2] += fz;
+    }
+  }
+
   if (vflag) {
     // more accurately, it is virial part of stress
     torch::Tensor stress_tensor = output.at("inferred_stress").toTensor().cpu();
@@ -321,7 +371,9 @@ void PairE3GNN::coeff(int narg, char **arg) {
   try {
     model = torch::jit::load(std::string(arg[2]), device, meta_dict);
   } catch (const c10::Error &e) {
-    error->all(FLERR, "error loading the model, check the path of the model");
+    char err_msg[256];
+    snprintf(err_msg, sizeof(err_msg), "error loading the model '%s': %s", arg[2], e.what_without_backtrace());
+    error->all(FLERR, err_msg);
   }
   // model = torch::jit::freeze(model); model is already freezed
 
@@ -355,15 +407,30 @@ void PairE3GNN::coeff(int narg, char **arg) {
     tok = std::strtok(nullptr, delim);
   }
 
+  int chem_arg_i = 3;
+  if (narg > chem_arg_i && strcmp(arg[chem_arg_i], "efield") == 0) {
+    if (narg < chem_arg_i + 4) {
+      error->all(FLERR, "e3gnn: efield keyword requires 3 values (ex ey ez)");
+    }
+    has_efield = true;
+    efield[0] = std::stod(arg[chem_arg_i + 1]);
+    efield[1] = std::stod(arg[chem_arg_i + 2]);
+    efield[2] = std::stod(arg[chem_arg_i + 3]);
+    chem_arg_i += 4;
+  }
+
   bool found_flag = false;
-  for (int i = 3; i < narg; i++) {
+  int n_chem = narg - chem_arg_i;
+  for (int i = 0; i < n_chem; i++) {
     found_flag = false;
     for (int j = 0; j < chem_vec.size(); j++) {
-      if (chem_vec[j].compare(arg[i]) == 0) {
-        map[i - 2] = j;
+      if (chem_vec[j].compare(arg[i + chem_arg_i]) == 0) {
+        map[i + 1] = j;
         found_flag = true;
-        fprintf(lmp->logfile, "Chemical specie '%s' is assigned to type %d\n",
-                arg[i], i - 2);
+        if (lmp->logfile) {
+          fprintf(lmp->logfile, "Chemical specie '%s' is assigned to type %d\n",
+                  arg[i + chem_arg_i], i + 1);
+        }
         break;
       }
     }
@@ -372,7 +439,7 @@ void PairE3GNN::coeff(int narg, char **arg) {
     }
   }
 
-  if (ntypes > narg - 3) {
+  if (ntypes > n_chem) {
     error->all(FLERR, "Not enough chemical specie is given. Check pair_coeff "
                       "and types in your data/script");
   }

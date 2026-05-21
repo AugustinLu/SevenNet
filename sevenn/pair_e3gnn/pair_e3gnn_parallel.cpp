@@ -39,6 +39,7 @@
 #include "memory.h"
 #include "neigh_list.h"
 #include "neighbor.h"
+#include "update.h"
 // #include "nvToolsExt.h"
 
 #include "pair_e3gnn_parallel.h"
@@ -86,14 +87,7 @@ DeviceBuffManager::~DeviceBuffManager() {
 
 PairE3GNNParallel::PairE3GNNParallel(LAMMPS *lmp) : Pair(lmp) {
   // constructor
-
-  const char *print_flag = std::getenv("SEVENN_PRINT_INFO");
-  const char *print_both_flag = std::getenv("SEVENN_PRINT_BOTH_INFO");
-  if (print_flag) {
-    world_rank = comm->me;
-    std::cout << "process rank: " << world_rank << " initialized" << std::endl;
-    print_info = (world_rank == 0) || print_both_flag;
-  }
+  world_rank = comm->me;
 
   std::string device_name;
   const bool use_gpu = torch::cuda::is_available();
@@ -164,9 +158,6 @@ torch::Device PairE3GNNParallel::get_cuda_device() {
   int rank = comm->me;
   num_gpus = torch::cuda::device_count();
   idx = rank % num_gpus;
-  if (print_info)
-    std::cout << world_rank << " Available # of GPUs found: " << num_gpus
-              << std::endl;
   cudaError_t cuda_err = cudaSetDevice(idx);
   if (cuda_err != cudaSuccess) {
     std::cerr << "E3GNN: Failed to set CUDA device: "
@@ -320,13 +311,6 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
       torch::stack({edge_idx_src_tensor, edge_idx_dst_tensor});
 
   auto inp_edge_vec = torch::from_blob(edge_vec, {nedges, 3}, FLOAT_TYPE);
-  if (print_info) {
-    std::cout << world_rank << " Nlocal: " << nlocal << std::endl;
-    std::cout << world_rank << " Graph_size: " << graph_size << std::endl;
-    std::cout << world_rank << " Ghost_node_num: " << ghost_node_num
-              << std::endl;
-    std::cout << world_rank << " Nedges: " << nedges << "\n" << std::endl;
-  }
 
   // r_original requires grad True
   inp_edge_vec.set_requires_grad(true);
@@ -440,22 +424,6 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
         x_comm, {nlocal, ghost_node_num, extra_size}, 0)[0];
   }
 
-  // postprocessing
-  if (print_info) {
-    size_t free, tot;
-    cudaMemGetInfo(&free, &tot);
-    std::cout << world_rank << " MEM use after backward(MB)" << std::endl;
-    double Mfree = static_cast<double>(free) / (1024 * 1024);
-    double Mtot = static_cast<double>(tot) / (1024 * 1024);
-    std::cout << world_rank << " Total: " << Mtot << std::endl;
-    std::cout << world_rank << " Free: " << Mfree << std::endl;
-    std::cout << world_rank << " Used: " << Mtot - Mfree << std::endl;
-    double Mused = Mtot - Mfree;
-    std::cout << world_rank << " Used/Nedges: " << Mused / nedges << std::endl;
-    std::cout << world_rank << " Used/Nlocal: " << Mused / nlocal << std::endl;
-    std::cout << world_rank << " Used/GraphSize: " << Mused / graph_size << "\n"
-              << std::endl;
-  }
   eng_vdwl += energy_tensor.item<float>(); // accumulate energy
 
   dE_dr = dE_dr.to(torch::kCPU);
@@ -477,6 +445,60 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
     f[i][0] += forces[graph_idx][0];
     f[i][1] += forces[graph_idx][1];
     f[i][2] += forces[graph_idx][2];
+  }
+
+  if (has_efield && output.contains("inferred_born_effective_charges")) {
+    torch::Tensor bec_tensor =
+        output.at("inferred_born_effective_charges").toTensor().cpu();
+    auto bec = bec_tensor.accessor<float, 2>();
+
+    // Define mathematically exact constants at compile-time (64-bit precision)
+    constexpr double inv_sqrt3 = 0.57735026918962576; // 1.0 / sqrt(3.0)
+    constexpr double inv_sqrt2 = 0.70710678118654752; // 1.0 / sqrt(2.0)
+    constexpr double inv_sqrt6 = 0.40824829046386302; // 1.0 / sqrt(6.0)
+    constexpr double sqrt2_3   = 0.81649658092772603; // sqrt(2.0 / 3.0)
+
+    for (int graph_idx = 0; graph_idx < nlocal; graph_idx++) {
+      int i = graph_index_to_i[graph_idx];
+
+      // Extract from float tensor and immediately promote to double for all further math
+      double i0 = bec[graph_idx][0];
+      double i1 = bec[graph_idx][1], i2 = bec[graph_idx][2], i3 = bec[graph_idx][3];
+      double i4 = bec[graph_idx][4], i5 = bec[graph_idx][5], i6 = bec[graph_idx][6];
+      double i7 = bec[graph_idx][7], i8 = bec[graph_idx][8];
+
+      // Reconstruct Cartesian tensor directly in double precision
+      double c_xx =  inv_sqrt3 * i0 - inv_sqrt6 * i6 - inv_sqrt2 * i8;
+      double c_xy =  inv_sqrt2 * i3 + inv_sqrt2 * i5;
+      double c_xz = -inv_sqrt2 * i2 + inv_sqrt2 * i4;
+
+      double c_yx = -inv_sqrt2 * i3 + inv_sqrt2 * i5;
+      double c_yy =  inv_sqrt3 * i0 + sqrt2_3   * i6;
+      double c_yz =  inv_sqrt2 * i1 + inv_sqrt2 * i7;
+
+      double c_zx =  inv_sqrt2 * i2 + inv_sqrt2 * i4;
+      double c_zy = -inv_sqrt2 * i1 + inv_sqrt2 * i7;
+      double c_zz =  inv_sqrt3 * i0 - inv_sqrt6 * i6 + inv_sqrt2 * i8;
+
+      double fx = (c_xx * efield[0] + c_xy * efield[1] + c_xz * efield[2]) * force->qe2f;
+      double fy = (c_yx * efield[0] + c_yy * efield[1] + c_yz * efield[2]) * force->qe2f;
+      double fz = (c_zx * efield[0] + c_zy * efield[1] + c_zz * efield[2]) * force->qe2f;
+
+      tagint *tag = atom->tag;
+      if (update->ntimestep == update->firststep && tag[i] <= 3 && lmp->logfile) {
+        fprintf(lmp->logfile, "Latest MD Step: %ld\n", static_cast<long>(update->ntimestep));
+        fprintf(lmp->logfile, "Atom %d BEC Tensor (e):\n", static_cast<int>(tag[i]));
+        fprintf(lmp->logfile, "[[ %11.8f  %11.8f  %11.8f]\n", c_xx, c_xy, c_xz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]\n", c_yx, c_yy, c_yz);
+        fprintf(lmp->logfile, " [ %11.8f  %11.8f  %11.8f]]\n", c_zx, c_zy, c_zz);
+        fprintf(lmp->logfile, "Applied E-Field (V/A): [%g  %g  %g]\n", efield[0], efield[1], efield[2]);
+        fprintf(lmp->logfile, "Resulting F_elec (eV/A): [%11.8f %11.8f %11.8f]\n\n", fx, fy, fz);
+      }
+
+      f[i][0] += fx;
+      f[i][1] += fy;
+      f[i][2] += fz;
+    }
   }
 
   if (vflag) {
@@ -635,6 +657,17 @@ void PairE3GNNParallel::coeff(int narg, char **arg) {
 
   // what if unknown chemical specie is in arg? should I abort? is there any use
   // case for that?
+  if (narg > chem_arg_i && strcmp(arg[chem_arg_i], "efield") == 0) {
+    if (narg < chem_arg_i + 4) {
+      error->all(FLERR, "e3gnn/parallel: efield keyword requires 3 values (ex ey ez)");
+    }
+    has_efield = true;
+    efield[0] = std::stod(arg[chem_arg_i + 1]);
+    efield[1] = std::stod(arg[chem_arg_i + 2]);
+    efield[2] = std::stod(arg[chem_arg_i + 3]);
+    chem_arg_i += 4;
+  }
+
   bool found_flag = false;
   int n_chem = narg - chem_arg_i;
   for (int i = 0; i < n_chem; i++) {
@@ -654,6 +687,11 @@ void PairE3GNNParallel::coeff(int narg, char **arg) {
       error->all(FLERR, "Unknown chemical specie is given or the number of "
                         "potential files is not consistent");
     }
+  }
+
+  if (ntypes > n_chem) {
+    error->all(FLERR, "Not enough chemical specie is given. Check pair_coeff "
+                      "and types in your data/script");
   }
 
   for (int i = 1; i <= ntypes; i++) {
@@ -818,15 +856,6 @@ int PairE3GNNParallel::pack_forward_comm_gnn(float *buf, int comm_phase) {
       }
     }
   }
-  if (print_info) {
-    std::cout << world_rank << " comm_phase: " << comm_phase << std::endl;
-    std::cout << world_rank << " pack_forward x_dim: " << x_dim << std::endl;
-    std::cout << world_rank << " pack_forward n: " << n << std::endl;
-    std::cout << world_rank << " pack_forward x_dim*n: " << x_dim * n
-              << std::endl;
-    double Msend = static_cast<double>(x_dim * n * 4) / (1024 * 1024);
-    std::cout << world_rank << " send size(MB): " << Msend << "\n" << std::endl;
-  }
   return x_dim * n;
 }
 
@@ -871,14 +900,6 @@ int PairE3GNNParallel::pack_reverse_comm_gnn(float *buf, int comm_phase) {
         buf[m++] = from[j];
       }
     }
-  }
-  if (print_info) {
-    std::cout << world_rank << " comm_phase: " << comm_phase << std::endl;
-    std::cout << world_rank << " pack_reverse x_dim: " << x_dim << std::endl;
-    std::cout << world_rank << " pack_reverse n: " << n << std::endl;
-    std::cout << world_rank << " pack_reverse x_dim*n: " << x_dim * n
-              << std::endl;
-    double Msend = static_cast<double>(x_dim * n * 4) / (1024 * 1024);
   }
   return x_dim * n;
 }

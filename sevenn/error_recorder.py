@@ -67,6 +67,13 @@ _ERROR_TYPES = {
         'unit': 'e',
         'vdim': 9,
     },
+    'DielectricTensor': {
+        'name': 'DielectricTensor',
+        'ref_key': KEY.DIELECTRIC_TENSOR,
+        'pred_key': KEY.PRED_DIELECTRIC_TENSOR,
+        'unit': '',
+        'vdim': 9,
+    },
     'TotalLoss': {
         'name': 'TotalLoss',
         'unit': None,
@@ -205,6 +212,7 @@ class BECDiagRMSError(ErrorMetric):
     Computes RMSE strictly on the diagonal elements of a
     3x3 Born Effective Charge tensor.
     """
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._se = torch.nn.MSELoss(reduction='none')
@@ -233,6 +241,7 @@ class BECOffDiagRMSError(ErrorMetric):
     Computes RMSE strictly on the off-diagonal elements of a
     3x3 Born Effective Charge tensor.
     """
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._se = torch.nn.MSELoss(reduction='none')
@@ -484,11 +493,18 @@ class ErrorRecorder:
                 stress_metric = CustomError(criteria, **get_err_type('Stress'))
                 metrics.append((stress_metric, config[KEY.STRESS_WEIGHT]))
         else:  # TODO: this is hard-coded
-            for efs in ['Energy', 'Force', 'Stress', 'BornEffectiveCharges']:
+            for efs in [
+                'Energy', 'Force', 'Stress',
+                'BornEffectiveCharges', 'DielectricTensor'
+            ]:
                 if efs == 'Stress' and not is_stress:
                     continue
                 if efs == 'BornEffectiveCharges' and not config.get(
                     KEY.IS_TRAIN_BEC, False
+                ):
+                    continue
+                if efs == 'DielectricTensor' and not config.get(
+                    KEY.IS_TRAIN_DIELECTRIC, False
                 ):
                     continue
                 lf, w = _get_loss_function_from_name(loss_functions, efs)
