@@ -33,6 +33,7 @@ SUPPORTING_ERROR_TYPES = [
     'Stress',
     'Stress_GPa',
     'BornEffectiveCharges',
+    'DielectricTensor',
     'TotalLoss',
 ]
 
