@@ -60,6 +60,13 @@ _ERROR_TYPES = {
         'coeff': 160.21766208,
         'vdim': 6,
     },
+    'BornEffectiveCharges': {
+        'name': 'BornEffectiveCharges',
+        'ref_key': KEY.BORN_EFFECTIVE_CHARGES,
+        'pred_key': KEY.PRED_BORN_EFFECTIVE_CHARGES,
+        'unit': 'e',
+        'vdim': 9,
+    },
     'TotalLoss': {
         'name': 'TotalLoss',
         'unit': None,
@@ -127,6 +134,19 @@ class ErrorMetric:
         self.ignore_unlabeled = ignore_unlabeled
         self.value = AverageNumber()
 
+        self.is_bec = (
+            self.ref_key == KEY.BORN_EFFECTIVE_CHARGES
+            and self.pred_key == KEY.PRED_BORN_EFFECTIVE_CHARGES
+        )
+
+    def _get_cartesian_tensor(self) -> Any:
+        if getattr(self, '_ct', None) is None:
+            import e3nn.io
+            from e3nn.io import CartesianTensor
+            self._ct = CartesianTensor('ij')
+            self._rtp = self._ct.reduced_tensor_products()
+        return self._ct, self._rtp
+
     def update(self, output: 'AtomGraphData') -> None:
         raise NotImplementedError
 
@@ -135,13 +155,28 @@ class ErrorMetric:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         y_ref = output[self.ref_key] * self.coeff
         y_pred = output[self.pred_key] * self.coeff
+
+        # If BornEffectiveCharges, convert irreps (pred) to cartesian
+        if self.is_bec:
+            ct, rtp = self._get_cartesian_tensor()
+            if y_pred.shape[-1] == 9:
+                y_pred = ct.to_cartesian(y_pred, rtp.to(y_pred.device))
+                y_pred = y_pred.view(-1, 9)
+            if y_ref.shape[-1] == 3 and y_ref.dim() == 3:
+                y_ref = y_ref.view(-1, 9)
+
         if self.per_atom:
             assert y_ref.dim() == 1 and y_pred.dim() == 1
             natoms = output[KEY.NUM_ATOMS]
             y_ref = y_ref / natoms
             y_pred = y_pred / natoms
         if self.ignore_unlabeled:
-            unlabelled_idx = torch.isnan(y_ref)
+            if y_ref.dim() > 1:
+                unlabelled_idx = (
+                    torch.isnan(y_ref).view(y_ref.shape[0], -1).any(dim=1)
+                )
+            else:
+                unlabelled_idx = torch.isnan(y_ref)
             y_ref = y_ref[~unlabelled_idx]
             y_pred = y_pred[~unlabelled_idx]
         return y_ref, y_pred
@@ -163,6 +198,63 @@ class ErrorMetric:
 
     def __str__(self):
         return f'{self.key_str()}: {self.value.get():.6f}'
+
+
+class BECDiagRMSError(ErrorMetric):
+    """
+    Computes RMSE strictly on the diagonal elements of a
+    3x3 Born Effective Charge tensor.
+    """
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._se = torch.nn.MSELoss(reduction='none')
+
+    def update(self, output: 'AtomGraphData') -> None:
+        y_ref, y_pred = self._retrieve(output)
+        if len(y_ref) == 0:
+            return
+        # Assumes y_ref and y_pred are flattened N*9 arrays, reshape to N, 3, 3
+        y_ref = y_ref.view(-1, 3, 3)
+        y_pred = y_pred.view(-1, 3, 3)
+
+        diag_idx = torch.arange(3)
+        y_ref_diag = y_ref[:, diag_idx, diag_idx].reshape(-1)
+        y_pred_diag = y_pred[:, diag_idx, diag_idx].reshape(-1)
+
+        se = self._se(y_ref_diag, y_pred_diag)
+        self.value.update(se)
+
+    def get(self) -> float:
+        return self.value.get() ** 0.5
+
+
+class BECOffDiagRMSError(ErrorMetric):
+    """
+    Computes RMSE strictly on the off-diagonal elements of a
+    3x3 Born Effective Charge tensor.
+    """
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._se = torch.nn.MSELoss(reduction='none')
+
+    def update(self, output: 'AtomGraphData') -> None:
+        y_ref, y_pred = self._retrieve(output)
+        if len(y_ref) == 0:
+            return
+        # Assumes y_ref and y_pred are flattened N*9 arrays, reshape to N, 3, 3
+        y_ref = y_ref.view(-1, 3, 3)
+        y_pred = y_pred.view(-1, 3, 3)
+
+        # Create mask for off-diagonal elements
+        mask = ~torch.eye(3, dtype=torch.bool, device=y_ref.device)
+        y_ref_off = y_ref[:, mask].reshape(-1)
+        y_pred_off = y_pred[:, mask].reshape(-1)
+
+        se = self._se(y_ref_off, y_pred_off)
+        self.value.update(se)
+
+    def get(self) -> float:
+        return self.value.get() ** 0.5
 
 
 class RMSError(ErrorMetric):
@@ -317,6 +409,8 @@ class ErrorRecorder:
         'ComponentRMSE': ComponentRMSError,
         'MAE': MAError,
         'Loss': LossError,
+        'DiagRMSE': BECDiagRMSError,
+        'OffDiagRMSE': BECOffDiagRMSError,
     }
 
     def __init__(self, metrics: List[ErrorMetric]) -> None:
@@ -390,8 +484,12 @@ class ErrorRecorder:
                 stress_metric = CustomError(criteria, **get_err_type('Stress'))
                 metrics.append((stress_metric, config[KEY.STRESS_WEIGHT]))
         else:  # TODO: this is hard-coded
-            for efs in ['Energy', 'Force', 'Stress']:
+            for efs in ['Energy', 'Force', 'Stress', 'BornEffectiveCharges']:
                 if efs == 'Stress' and not is_stress:
+                    continue
+                if efs == 'BornEffectiveCharges' and not config.get(
+                    KEY.IS_TRAIN_BEC, False
+                ):
                     continue
                 lf, w = _get_loss_function_from_name(loss_functions, efs)
                 if lf is None:

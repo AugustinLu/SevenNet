@@ -21,3 +21,8 @@ sevenn/pretrained_potentials/SevenNet_omni_i12
 sevenn/pair_d3*
 *ninja*
 *libpaird3*
+mock_data/
+sevenn_data/
+loss_evolution.png
+bec_parity_plot.png
+checkpoint_best.pth

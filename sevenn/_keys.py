@@ -49,6 +49,7 @@ EDGE_EMBEDDING: Final[str] = 'edge_embedding'  # (from edge embedding)
 ENERGY: Final[str] = 'total_energy'  # (1)
 FORCE: Final[str] = 'force_of_atoms'  # (N, 3)
 STRESS: Final[str] = 'stress'  # (6)
+BORN_EFFECTIVE_CHARGES: Final[str] = 'born_effective_charges'  # (N, 3, 3)
 
 # This is for training, per atom scale.
 SCALED_ENERGY: Final[str] = 'scaled_total_energy'
@@ -66,6 +67,8 @@ SCALED_FORCE: Final[str] = 'scaled_force'
 
 PRED_STRESS: Final[str] = 'inferred_stress'
 SCALED_STRESS: Final[str] = 'scaled_stress'
+
+PRED_BORN_EFFECTIVE_CHARGES: Final[str] = 'inferred_born_effective_charges'
 
 # very general data property for AtomGraphData
 NUM_ATOMS: Final[str] = 'num_atoms'  # int
@@ -116,14 +119,17 @@ OPTIMIZER = 'optimizer'
 OPTIM_PARAM = 'optim_param'
 SCHEDULER = 'scheduler'
 SCHEDULER_PARAM = 'scheduler_param'
+ENERGY_WEIGHT = 'energy_loss_weight'
 FORCE_WEIGHT = 'force_loss_weight'
 STRESS_WEIGHT = 'stress_loss_weight'
+BEC_WEIGHT = 'bec_loss_weight'
 DEVICE = 'device'
 DTYPE = 'dtype'
 
 TRAIN_SHUFFLE = 'train_shuffle'
 
 IS_TRAIN_STRESS = 'is_train_stress'
+IS_TRAIN_BEC = 'is_train_bec'
 
 CONTINUE = 'continue'
 CHECKPOINT = 'checkpoint'

@@ -31,9 +31,11 @@ private:
   torch::jit::Module model;
   torch::Device device = torch::kCPU;
   int nelements;
-  bool print_info = false;
 
   int nedges_bound = -1;
+
+  bool has_efield = false;
+  double efield[3];
 
 public:
   PairE3GNN(class LAMMPS *);
