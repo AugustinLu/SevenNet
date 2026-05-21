@@ -145,14 +145,24 @@ class ErrorMetric:
             self.ref_key == KEY.BORN_EFFECTIVE_CHARGES
             and self.pred_key == KEY.PRED_BORN_EFFECTIVE_CHARGES
         )
+        self.is_dielectric = (
+            self.ref_key == KEY.DIELECTRIC_TENSOR
+            and self.pred_key == KEY.PRED_DIELECTRIC_TENSOR
+        )
 
     def _get_cartesian_tensor(self) -> Any:
         if getattr(self, '_ct', None) is None:
             import e3nn.io
             from e3nn.io import CartesianTensor
-            self._ct = CartesianTensor('ij')
-            self._rtp = self._ct.reduced_tensor_products()
-        return self._ct, self._rtp
+            if self.is_bec:
+                self._ct = CartesianTensor('ij')
+            elif self.is_dielectric:
+                self._ct = CartesianTensor('ij=ji')
+            else:
+                self._ct = None
+            if self._ct is not None:
+                self._rtp = self._ct.reduced_tensor_products()
+        return self._ct, getattr(self, '_rtp', None)
 
     def update(self, output: 'AtomGraphData') -> None:
         raise NotImplementedError
@@ -163,16 +173,20 @@ class ErrorMetric:
         y_ref = output[self.ref_key] * self.coeff
         y_pred = output[self.pred_key] * self.coeff
 
-        # If BornEffectiveCharges, convert irreps (pred) to cartesian
-        if self.is_bec:
+        # If BornEffectiveCharges or Dielectric, convert irreps (pred) to cartesian
+        if self.is_bec or self.is_dielectric:
             ct, rtp = self._get_cartesian_tensor()
-            if y_pred.shape[-1] == 9:
+            if y_pred.shape[-1] == 9 or (self.is_dielectric and y_pred.shape[-1] == 6):
                 y_pred = ct.to_cartesian(y_pred, rtp.to(y_pred.device))
                 y_pred = y_pred.view(-1, 9)
-            if y_ref.shape[-1] == 3 and y_ref.dim() == 3:
+            if y_ref.shape[-1] == 3 and y_ref.dim() >= 3:
                 y_ref = y_ref.view(-1, 9)
 
         if self.per_atom:
+            if y_ref.dim() > 1:
+                y_ref = y_ref.view(-1)
+            if y_pred.dim() > 1:
+                y_pred = y_pred.view(-1)
             assert y_ref.dim() == 1 and y_pred.dim() == 1
             natoms = output[KEY.NUM_ATOMS]
             y_ref = y_ref / natoms
