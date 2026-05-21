@@ -182,7 +182,7 @@ class ErrorMetric:
             if y_ref.shape[-1] == 3 and y_ref.dim() >= 3:
                 y_ref = y_ref.view(-1, 9)
 
-        if self.per_atom:
+        if self.per_atom and not self.is_dielectric:
             if y_ref.dim() > 1:
                 y_ref = y_ref.view(-1)
             if y_pred.dim() > 1:
