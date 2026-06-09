@@ -156,10 +156,11 @@ class Trainer:
         if wrap_tqdm:
             total_len = wrap_tqdm if isinstance(wrap_tqdm, int) else None
             loader = tqdm(loader, total=total_len)
+        is_mps = self.device.type == 'mps'
         for _, batch in enumerate(loader):
             if is_train:
                 self.optimizer.zero_grad()
-            batch = batch.to(self.device, non_blocking=True)
+            batch = batch.to(self.device, non_blocking=not is_mps)
             output = self.model(batch)
             if error_recorder is not None:
                 error_recorder.update(output)
