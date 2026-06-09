@@ -188,10 +188,8 @@ class ForceStressOutputFromEdge(nn.Module):
             # compute force
             pf = torch.zeros(tot_num, 3, dtype=fij.dtype, device=fij.device)
             nf = torch.zeros(tot_num, 3, dtype=fij.dtype, device=fij.device)
-            _edge_src = broadcast(edge_idx[0], fij, 0)
-            _edge_dst = broadcast(edge_idx[1], fij, 0)
-            pf.scatter_reduce_(0, _edge_src, fij, reduce='sum')
-            nf.scatter_reduce_(0, _edge_dst, fij, reduce='sum')
+            pf.index_add_(0, edge_idx[0], fij)
+            nf.index_add_(0, edge_idx[1], fij)
             data[self.key_force] = pf - nf
 
             # compute virial
@@ -208,8 +206,7 @@ class ForceStressOutputFromEdge(nn.Module):
             ], dim=-1)
 
             _s = torch.zeros(tot_num, 6, dtype=fij.dtype, device=fij.device)
-            _edge_dst6 = broadcast(edge_idx[1], _virial, 0)
-            _s.scatter_reduce_(0, _edge_dst6, _virial, reduce='sum')
+            _s.index_add_(0, edge_idx[1], _virial)
             if self.use_atomic_virial:
                 data[self.key_atomic_virial] = torch.neg(_s)
 
@@ -219,8 +216,7 @@ class ForceStressOutputFromEdge(nn.Module):
                 sout = torch.zeros(
                     (nbatch, 6), dtype=_virial.dtype, device=_virial.device
                 )
-                _batch = broadcast(batch, _s, 0)
-                sout.scatter_reduce_(0, _batch, _s, reduce='sum')
+                sout.index_add_(0, batch, _s)
             else:
                 sout = torch.sum(_s, dim=0)
 

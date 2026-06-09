@@ -17,12 +17,14 @@ from .util import broadcast
 def message_gather(
     node_features: torch.Tensor, edge_dst: torch.Tensor, message: torch.Tensor
 ) -> torch.Tensor:
-    index = broadcast(edge_dst, message, 0)
+    # index_add_ expects a 1D index tensor that has the same length as the 0th
+    # dimension of message.
+    # We do not need to broadcast it like scatter_reduce_ requires.
     out_shape = [len(node_features)] + list(message.shape[1:])
     out = torch.zeros(
         out_shape, dtype=node_features.dtype, device=node_features.device
     )
-    out.scatter_reduce_(0, index, message, reduce='sum')
+    out.index_add_(0, edge_dst, message)
     return out
 
 

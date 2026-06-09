@@ -461,14 +461,8 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
   dE_dr = dE_dr.to(torch::kCPU);
   torch::Tensor force_tensor = torch::zeros({graph_indexer, 3});
 
-  auto _edge_idx_src_tensor =
-      edge_idx_src_tensor.repeat_interleave(3).view({nedges, 3});
-  auto _edge_idx_dst_tensor =
-      edge_idx_dst_tensor.repeat_interleave(3).view({nedges, 3});
-
-  force_tensor.scatter_reduce_(0, _edge_idx_src_tensor, dE_dr, "sum");
-  force_tensor.scatter_reduce_(0, _edge_idx_dst_tensor, torch::neg(dE_dr),
-                               "sum");
+  force_tensor.index_add_(0, edge_idx_src_tensor, dE_dr);
+  force_tensor.index_add_(0, edge_idx_dst_tensor, torch::neg(dE_dr));
 
   auto forces = force_tensor.accessor<float, 2>();
 
@@ -489,10 +483,7 @@ void PairE3GNNParallel::compute(int eflag, int vflag) {
     auto voigt = torch::cat(voigt_list, 1);
 
     torch::Tensor per_atom_stress_tensor = torch::zeros({graph_indexer, 6});
-    auto _edge_idx_dst6_tensor =
-        edge_idx_dst_tensor.repeat_interleave(6).view({nedges, 6});
-    per_atom_stress_tensor.scatter_reduce_(0, _edge_idx_dst6_tensor, voigt,
-                                           "sum");
+    per_atom_stress_tensor.index_add_(0, edge_idx_dst_tensor, voigt);
     auto virial_stress_tensor =
         torch::neg(torch::sum(per_atom_stress_tensor, 0));
     auto virial_stress = virial_stress_tensor.accessor<float, 1>();

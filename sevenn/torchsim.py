@@ -11,8 +11,8 @@ from torch_geometric.loader.dataloader import Collater
 
 import sevenn._keys as key
 from sevenn.atom_graph_data import AtomGraphData
-from sevenn.util import load_checkpoint
 from sevenn.device import get_auto_device
+from sevenn.util import load_checkpoint
 
 try:
     import torch_sim as ts

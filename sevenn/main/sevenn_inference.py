@@ -94,8 +94,8 @@ def add_args(parser):
 
 def run(args):
     import torch
-    from sevenn.device import get_auto_device
 
+    from sevenn.device import get_auto_device
     from sevenn.scripts.inference import inference
     from sevenn.util import pretrained_name_to_path
 

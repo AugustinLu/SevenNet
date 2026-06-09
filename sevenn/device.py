@@ -1,5 +1,6 @@
 import torch
 
+
 def get_auto_device() -> str:
     """
     Returns the best available device for computation.

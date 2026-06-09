@@ -133,7 +133,7 @@ class AtomReduce(nn.Module):
                 dtype=src.dtype,
                 device=src.device,
             )
-            output.scatter_reduce_(0, data[KEY.BATCH], src, reduce='sum')
+            output.index_add_(0, data[KEY.BATCH], src)
             data[self.key_output] = output * self.constant
         else:
             data[self.key_output] = torch.sum(data[self.key_input]) * self.constant

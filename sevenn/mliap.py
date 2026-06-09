@@ -19,9 +19,9 @@ except ModuleNotFoundError:
 
 import sevenn._keys as KEY
 from sevenn._const import AtomGraphDataType
+from sevenn.device import get_auto_device
 from sevenn.nn._ghost_exchange import MLIAPGhostExchangeModule
 from sevenn.util import load_checkpoint, pretrained_name_to_path
-from sevenn.device import get_auto_device
 
 
 class MLIAPWrappedConvolution(nn.Module):

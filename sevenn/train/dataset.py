@@ -371,16 +371,25 @@ class AtomGraphDataset:
         atomx = torch.concat([d[self.DATA_KEY_X] for d in data_list])
         force = torch.concat([d[self.DATA_KEY_FORCE] for d in data_list])
 
-        index = atomx.repeat_interleave(3, 0).reshape(force.shape)
-        rms = torch.zeros(
+        # scatter_reduce with reduce='mean' is not directly supported by index_add_,
+        # so we calculate the sum and the count, then divide to get the mean.
+        sq_sum = torch.zeros(
             (num_chem_species, 3),
             dtype=force.dtype,
             device=force.device
         )
-        rms.scatter_reduce_(
-            0, index, force.square(),
-            reduce='mean', include_self=False
+        sq_sum.index_add_(0, atomx, force.square())
+
+        counts = torch.zeros(
+            (num_chem_species,),
+            dtype=force.dtype,
+            device=force.device
         )
+        counts.index_add_(0, atomx, torch.ones_like(atomx, dtype=force.dtype))
+        # Prevent division by zero
+        counts = counts.clamp_min_(1.0).unsqueeze(-1)
+
+        rms = sq_sum / counts
         return torch.sqrt(rms.mean(dim=1))
 
     def get_avg_num_neigh(self):
