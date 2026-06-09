@@ -205,7 +205,7 @@ class SevenNetModel(ModelInterface):  # type: ignore[misc,valid-type]
             state = state.to(self._device)
 
         # Batched neighbor list using linked-cell algorithm with row-vector cell
-        n_systems = int(state.system_idx.max().item() + 1)
+        n_systems = int(state.system_idx.max().cpu().item() + 1)
         edge_index, mapping_system, unit_shifts = self.neighbor_list_fn(
             state.positions,
             state.row_vector_cell,
@@ -273,7 +273,7 @@ class SevenNetModel(ModelInterface):  # type: ignore[misc,valid-type]
             results['energy'] = energy
         else:
             results['energy'] = torch.zeros(
-                int(state.system_idx.max().item() + 1), device=self._device,
+                int(state.system_idx.max().cpu().item() + 1), device=self._device,
             )
 
         forces = output[key.PRED_FORCE]
