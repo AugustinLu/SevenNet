@@ -12,6 +12,7 @@ from tqdm import tqdm
 import sevenn._keys as KEY
 from sevenn.error_recorder import ErrorRecorder
 from sevenn.train.loss import LossDefinition
+from sevenn.device import get_auto_device
 
 from .loss import get_loss_functions_from_config
 from .optim import optim_dict, scheduler_dict
@@ -47,7 +48,7 @@ class Trainer:
         distributed_backend: str = 'nccl',
     ) -> None:
         if device == 'auto':
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            device = get_auto_device()
             if distributed_backend == 'mpi':
                 device = 'cpu'
 

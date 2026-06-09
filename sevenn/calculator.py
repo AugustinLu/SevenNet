@@ -13,6 +13,7 @@ from ase.calculators.mixing import SumCalculator
 import sevenn._keys as KEY
 import sevenn.util as util
 from sevenn.atom_graph_data import AtomGraphData
+from sevenn.device import get_auto_device
 from sevenn.nn.sequential import AtomGraphSequential
 from sevenn.train.dataload import unlabeled_atoms_to_graph
 
@@ -106,9 +107,7 @@ class SevenNetCalculator(Calculator):
 
         if isinstance(device, str):  # TODO: do we really need this?
             if device == 'auto':
-                self.device = torch.device(
-                    'cuda' if torch.cuda.is_available() else 'cpu'
-                )
+                self.device = torch.device(get_auto_device())
             else:
                 self.device = torch.device(device)
         else:

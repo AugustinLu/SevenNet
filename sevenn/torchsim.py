@@ -12,6 +12,7 @@ from torch_geometric.loader.dataloader import Collater
 import sevenn._keys as key
 from sevenn.atom_graph_data import AtomGraphData
 from sevenn.util import load_checkpoint
+from sevenn.device import get_auto_device
 
 try:
     import torch_sim as ts
@@ -122,9 +123,7 @@ class SevenNetModel(ModelInterface):  # type: ignore[misc,valid-type]
 
         if isinstance(device, str):
             if device == 'auto':
-                self._device = torch.device(
-                    'cuda' if torch.cuda.is_available() else 'cpu'
-                )
+                self._device = torch.device(get_auto_device())
             else:
                 self._device = torch.device(device)
         else:

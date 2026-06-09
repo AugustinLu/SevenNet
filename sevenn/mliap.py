@@ -21,6 +21,7 @@ import sevenn._keys as KEY
 from sevenn._const import AtomGraphDataType
 from sevenn.nn._ghost_exchange import MLIAPGhostExchangeModule
 from sevenn.util import load_checkpoint, pretrained_name_to_path
+from sevenn.device import get_auto_device
 
 
 class MLIAPWrappedConvolution(nn.Module):
@@ -90,7 +91,7 @@ class SevenNetMLIAPWrapper(MLIAPUnified):
         """
 
         super().__init__()
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(get_auto_device())
 
         # load checkpoint
         self.model_path = model_path

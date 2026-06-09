@@ -9,6 +9,7 @@ import yaml
 import sevenn._const as _const
 import sevenn._keys as KEY
 import sevenn.util as util
+from sevenn.device import get_auto_device
 
 
 def config_initialize(
@@ -119,13 +120,12 @@ def init_train_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         device_input = config[KEY.DEVICE]
-        train_meta[KEY.DEVICE] = torch.device(device_input)
+        if device_input == 'auto':
+            train_meta[KEY.DEVICE] = torch.device(get_auto_device())
+        else:
+            train_meta[KEY.DEVICE] = torch.device(device_input)
     except KeyError:
-        train_meta[KEY.DEVICE] = (
-            torch.device('cuda')
-            if torch.cuda.is_available()
-            else torch.device('cpu')
-        )
+        train_meta[KEY.DEVICE] = torch.device(get_auto_device())
     train_meta[KEY.DEVICE] = str(train_meta[KEY.DEVICE])
 
     # init simpler ones
