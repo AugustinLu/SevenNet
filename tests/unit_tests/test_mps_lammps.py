@@ -1,0 +1,388 @@
+"""LAMMPS on the Apple GPU: the serial pair style (sevenn/pair_e3gnn_mps/,
+sevenn/lammps_pair.py) and the `fix external` bridge (sevenn/lammps_external.py).
+Tests that need LAMMPS are skipped without the lammps Python module; MPS tests are
+skipped without an Apple GPU."""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+from ase.build import bulk
+from test_mps_opt import _build, _config, needs_mps
+
+from sevenn.calculator import SevenNetCalculator
+
+
+@needs_mps
+def test_lammps_bridge_equals_the_calculator(tmp_path):
+    lammps = pytest.importorskip('lammps')
+    from sevenn.lammps_external import run_input
+
+    calc = SevenNetCalculator(
+        _build(_config()), file_type='model_instance', device='mps'
+    )
+    a = 5.63
+    at = bulk('NaCl', 'rocksalt', a=a, cubic=True)
+    at.rattle(0.05, seed=2)
+    data = tmp_path / 'at.data'
+    from ase.io import write
+
+    write(
+        data, at, format='lammps-data', specorder=['Na', 'Cl'], atom_style='atomic'
+    )
+    inp = tmp_path / 'in.lmp'
+    inp.write_text(f"""units metal
+atom_style atomic
+boundary p p p
+read_data {data}
+mass 1 22.99
+mass 2 35.45
+pair_style zero 4.0
+pair_coeff * *
+fix sevenn all external pf/callback 1 1
+fix_modify sevenn energy yes virial yes
+thermo_style custom step pe press pxx pyy pzz pxy pxz pyz
+run 0
+""")
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    run_input(lmp, str(inp), calc, ['Na', 'Cl'])
+    pe, press = lmp.get_thermo('pe'), lmp.get_thermo('pxx')
+    fl = lmp.numpy.extract_atom('f')[: len(at)].copy()
+    ids = lmp.numpy.extract_atom('id')[: len(at)].copy()
+    lmp.close()
+    at.calc = calc
+    assert abs(pe - at.get_potential_energy()) < 1e-3
+    f = at.get_forces()
+    assert np.abs(fl[np.argsort(ids)] - f).max() < 2e-4
+    # ASE stress in eV/A^3; LAMMPS pressure in bar, kinetic part is 0 at rest
+    assert abs(press - (-at.get_stress()[0] * 1602176.634)) < 2.0
+
+
+_PLUGIN = str(
+    Path(__file__).parents[2] / 'sevenn' / 'pair_e3gnn_mps' / 'e3gnnmpsplugin.so'
+)
+
+
+needs_plugin = pytest.mark.skipif(
+    not Path(_PLUGIN).exists(), reason='pair_e3gnn_mps/build_plugin.sh not run'
+)
+
+
+def _pair_lammps(tmp_path, at, coeff):
+    lammps = pytest.importorskip('lammps')
+    from ase.io import write
+
+    data = tmp_path / 'at.data'
+    write(
+        data, at, format='lammps-data', specorder=['Na', 'Cl'], atom_style='atomic'
+    )
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    for line in (
+        f'plugin load {_PLUGIN}',
+        'units metal',
+        'atom_style atomic',
+        'boundary p p p',
+        f'read_data {data}',
+        'mass 1 22.99',
+        'mass 2 35.45',
+        'pair_style e3gnn',
+        f'pair_coeff * * {coeff}',
+    ):
+        lmp.command(line)
+    return lmp
+
+
+@needs_mps
+@needs_plugin
+def test_pair_style_equals_the_calculator(tmp_path):
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.rattle(0.05, seed=2)
+    lmp = _pair_lammps(tmp_path, at, '7net-0 Na Cl')
+    lmp.command('thermo_style custom step pe press pxx pyy pzz pxy pxz pyz')
+    lmp.command('compute pea all pe/atom')
+    lmp.command('run 0')
+    pe, press = lmp.get_thermo('pe'), lmp.get_thermo('pxx')
+    ids = lmp.numpy.extract_atom('id')[: len(at)].copy()
+    fl = lmp.numpy.extract_atom('f')[: len(at)].copy()
+    lmp.close()
+    calc = SevenNetCalculator('7net-0', device='mps')
+    at.calc = calc
+    assert abs(pe - at.get_potential_energy()) < 1e-3
+    assert np.abs(fl[np.argsort(ids)] - at.get_forces()).max() < 2e-4
+    assert abs(press - (-at.get_stress()[0] * 1602176.634)) < 2.0
+
+
+@needs_mps
+@needs_plugin
+@pytest.mark.parametrize(
+    'coeff, message',
+    [
+        ('7net-0 Na', 'not enough elements'),
+        ('7net-0 Na Xx', 'neither a keyword'),
+        ('deployed.pt Na Cl', 'deployed'),
+    ],
+)
+def test_pair_style_clear_errors(tmp_path, coeff, message):
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    with pytest.raises(Exception, match=message):
+        _pair_lammps(tmp_path, at, coeff)
+
+
+class _FakeLammps:
+    def __init__(self, ranks, units):
+        self.ranks, self.units = ranks, units
+
+    def extract_setting(self, name):
+        return self.ranks
+
+    def extract_global(self, name):
+        return self.units
+
+    def set_fix_external_callback(self, *args):
+        pass
+
+
+def test_external_bridge_refuses_ranks_and_units():
+    from sevenn.lammps_external import attach
+
+    with pytest.raises(ValueError, match='one MPI rank'):
+        attach(_FakeLammps(2, 'metal'), None, ['Na'])
+    with pytest.raises(ValueError, match='units metal'):
+        attach(_FakeLammps(1, 'real'), None, ['Na'])
+    attach(_FakeLammps(1, 'metal'), None, ['Na'])
+
+
+@needs_mps
+def test_external_bridge_virial_on_a_slab(tmp_path):
+    lammps = pytest.importorskip('lammps')
+    from ase.io import write
+
+    from sevenn.lammps_external import run_input
+
+    calc = SevenNetCalculator('7net-0', device='mps')
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.cell[2, 2] += 10.0
+    at.pbc = [True, True, False]
+    at.rattle(0.05, seed=2)
+    at.positions += 0.3
+    write(
+        tmp_path / 'at.data',
+        at,
+        format='lammps-data',
+        specorder=['Na', 'Cl'],
+        atom_style='atomic',
+    )
+    inp = tmp_path / 'in.lmp'
+    inp.write_text(f"""units metal
+atom_style atomic
+boundary p p f
+read_data {tmp_path / 'at.data'}
+mass 1 22.99
+mass 2 35.45
+pair_style zero 5.0
+pair_coeff * *
+fix sevenn all external pf/callback 1 1
+fix_modify sevenn energy yes virial yes
+thermo_style custom step pe pxx
+run 0
+""")
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    run_input(lmp, str(inp), calc, ['Na', 'Cl'])
+    press = lmp.get_thermo('pxx')
+    x = lmp.numpy.extract_atom('x')[: len(at)].copy()
+    ids = lmp.numpy.extract_atom('id')[: len(at)].copy()
+    lmp.close()
+    assert abs(press) > 1.0
+    at.positions = x[np.argsort(ids)]
+    at.calc = calc
+    assert abs(press - (-at.get_stress()[0] * 1602176.634)) < 2.0
+
+
+@needs_mps
+@needs_plugin
+@pytest.mark.parametrize(
+    'line, message',
+    [('units real', 'units metal'), ('neigh_modify exclude type 1 2', 'exclude')],
+)
+def test_pair_style_refuses_what_it_cannot_honour(tmp_path, line, message):
+    lammps = pytest.importorskip('lammps')
+    from ase.io import write
+
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    write(
+        tmp_path / 'at.data',
+        at,
+        format='lammps-data',
+        specorder=['Na', 'Cl'],
+        atom_style='atomic',
+    )
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    lines = [
+        f'plugin load {_PLUGIN}',
+        'units metal',
+        'atom_style atomic',
+        f'read_data {tmp_path / "at.data"}',
+        'mass 1 22.99',
+        'mass 2 35.45',
+        'pair_style e3gnn',
+        'pair_coeff * * 7net-0 Na Cl',
+    ]
+    if line == 'units real':
+        lines[1] = line
+    else:
+        lines.append(line)
+    for l in lines:
+        lmp.command(l)
+    with pytest.raises(Exception, match=message):
+        lmp.command('run 0')
+
+
+@needs_mps
+@needs_plugin
+def test_pair_style_refuses_an_empty_box():
+    lammps = pytest.importorskip('lammps')
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    for l in (
+        f'plugin load {_PLUGIN}',
+        'units metal',
+        'atom_style atomic',
+        'region b block 0 10 0 10 0 10',
+        'create_box 2 b',
+        'mass 1 22.99',
+        'mass 2 35.45',
+        'pair_style e3gnn',
+        'pair_coeff * * 7net-0 Na Cl',
+    ):
+        lmp.command(l)
+    with pytest.raises(Exception, match='at least one atom'):
+        lmp.command('run 0')
+
+
+def test_pair_coeff_parser_says_what_is_wrong():
+    from sevenn.lammps_pair import _parse
+
+    with pytest.raises(ValueError, match='modal requires'):
+        _parse(['modal'])
+    # an unknown keyword is reported, not taken as an element
+    for words in (['mode', 'mpa'], ['cutoff', '5.0']):
+        with pytest.raises(ValueError, match='neither a keyword'):
+            _parse(words + ['Na', 'Cl'])
+    assert _parse(['modal', 'mpa', 'Zr', 'O']) == dict(
+        modal='mpa', symbols=['Zr', 'O']
+    )
+    assert _parse(['Na', 'Cl']) == dict(modal=None, symbols=['Na', 'Cl'])
+
+
+@needs_mps
+def test_driver_with_no_atoms_gives_zero():
+    from sevenn.lammps_pair import PairDriver
+
+    box = ((0.0, 0.0, 0.0), (10.0, 10.0, 10.0), 0.0, 0.0, 0.0, (0, 0, 0))
+    driver = PairDriver(['7net-0', 'Na', 'Cl'], 2, box)
+    assert (
+        driver.compute(
+            0,
+            memoryview(b''),
+            memoryview(bytearray()),
+            memoryview(b''),
+            None,
+            memoryview(bytearray(48)),
+            box,
+        )
+        == 0.0
+    )
+
+
+def test_run_input_joins_continued_lines(tmp_path):
+    from sevenn.lammps_external import run_input
+
+    class Fake(_FakeLammps):
+        def __init__(self):
+            super().__init__(1, 'metal')
+            self.seen = []
+
+        def command(self, line):
+            self.seen.append(line)
+
+    path = tmp_path / 'in.lmp'
+    path.write_text(
+        'units metal  # comment\n\nfix sevenn all external &\n   pf/callback 1 '
+        '1\nprint "Step #1"\n'
+    )
+    lmp = Fake()
+    run_input(lmp, str(path), None, ['Na'])
+    assert any(
+        ' '.join(c.split()) == 'fix sevenn all external pf/callback 1 1'
+        for c in lmp.seen
+    )
+    assert 'print "Step #1"' in lmp.seen
+
+
+def test_patch_lammps_reports_failure():
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).parents[2]))
+    p = subprocess.run(
+        [
+            sys.executable,
+            '-m',
+            'sevenn.main.sevenn_patch_lammps',
+            '/no/such/folder',
+            '--enable_mps',
+        ],
+        capture_output=True,
+        env=env,
+    )
+    assert p.returncode != 0
+
+
+def test_external_bridge_stops_when_the_calculator_fails(tmp_path):
+    lammps = pytest.importorskip('lammps')
+    from ase.calculators.calculator import Calculator, all_changes
+    from ase.io import write
+
+    from sevenn.lammps_external import run_input
+
+    class Failing(Calculator):
+        implemented_properties = ['energy', 'forces', 'stress']
+        calls = 0
+
+        def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+            super().calculate(atoms, properties, system_changes)
+            Failing.calls += 1
+            if Failing.calls == 3:
+                raise RuntimeError('model failed')
+            self.results = dict(
+                energy=0.0, forces=np.zeros((len(atoms), 3)), stress=np.zeros(6)
+            )
+
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    write(
+        tmp_path / 'at.data',
+        at,
+        format='lammps-data',
+        specorder=['Na', 'Cl'],
+        atom_style='atomic',
+    )
+    inp = tmp_path / 'in.lmp'
+    inp.write_text(f"""units metal
+atom_style atomic
+boundary p p p
+read_data {tmp_path / 'at.data'}
+mass 1 22.99
+mass 2 35.45
+pair_style zero 4.0
+pair_coeff * *
+velocity all create 300 1
+fix nve all nve
+fix sevenn all external pf/callback 1 1
+fix_modify sevenn energy yes virial yes
+run 20
+print "not reached"
+""")
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    with pytest.raises(RuntimeError, match='model failed'):
+        run_input(lmp, str(inp), Failing(), ['Na', 'Cl'])
+    assert lmp.extract_global('ntimestep') < 5 and Failing.calls == 3
+    lmp.close()

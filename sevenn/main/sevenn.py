@@ -317,7 +317,7 @@ def main():
     elif args.command in ['inference', 'inf']:
         inference_cmd.run(args)
     elif args.command == 'patch_lammps':
-        patch_lammps_cmd.run(args)
+        sys.exit(patch_lammps_cmd.run(args))
     elif args.command == 'preset':
         preset_cmd.run(args)
     elif args.command == 'lunatp_precompile':
