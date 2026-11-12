@@ -115,3 +115,31 @@ Currently, the parallel version encounters an error when one of the subdomain ce
 :::{caution}
 Currently, our D3 algorithm is not supported by multi-GPU.
 :::
+
+## Apple GPU (serial)
+
+On a Mac with Apple silicon, `pair_style e3gnn` can run on the GPU with the fused Metal kernels of the [Apple GPU accelerator](./accelerator.md#apple-gpu-metal). TorchScript cannot hold these kernels, so this pair style embeds Python and runs SevenNet from the checkpoint: there is no deployment step, and `pair_coeff` takes the checkpoint or a pretrained name. It is serial (one MPI rank) and needs `units metal`.
+
+```text
+units       metal
+atom_style  atomic
+pair_style  e3gnn
+pair_coeff  * * 7net-0 Hf O
+```
+`modal NAME` before the chemical species selects the fidelity of a multi-fidelity model, e.g. `pair_coeff * * 7net-omni modal mpa Hf O`.
+
+Build LAMMPS with the pair style (no libtorch link is needed):
+```bash
+git clone https://github.com/lammps/lammps.git lammps_sevenn --branch stable_22Jul2025_update4 --depth=1
+sevenn patch_lammps ./lammps_sevenn --enable_mps
+cd lammps_sevenn && mkdir build && cd build
+cmake ../cmake -DBUILD_MPI=no -DBUILD_OMP=no && make -j 8
+```
+Or, without building LAMMPS, as a plugin for `pip install lammps mpich`:
+```bash
+sh $(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps/build_plugin.sh python
+export LAMMPS_PLUGIN_PATH=$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps
+lmp -in in.lammps
+```
+
+LAMMPS runs SevenNet in the Python environment that ran `patch_lammps` or `build_plugin.sh`. `SEVENN_PYTHON` and `SEVENN_ROOT` override that environment and the SevenNet directory. `--enable_flash`, `--enable_oeq` and `--d3` need CUDA and cannot be combined with `--enable_mps`. Per-atom energies are available; per-atom stress is not. `sevenn.lammps_external` gives the same calculation through `fix external` for runs driven from Python.

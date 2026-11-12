@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 - Dataset type: `aselmdb`, `custom`
 - SevenNet-Nano checkpoints for `7net-nano-4.5`, `7net-nano-5.0`, `7net-nano-5.5`, and `7net-nano-6.0`
 - Support LunaTP (`enable_lunatp`). LAMMPS through ML-IAP only.
+- Apple GPU support with fused Metal kernels (`device='mps'`, `enable_mps`, `--enable_mps`) for inference and training, and a serial LAMMPS pair style for Apple GPUs (`sevenn patch_lammps --enable_mps`)
+- Shift and scale in float64 are converted to float32 when a model moves to the Apple GPU, which has no float64
 
 ### Changed
 - The default dtype of the rescale layer is changed to double precision. Use the `SEVENN_SHIFT_SCALE_DTYPE` environment variable for backward single-precision compatibility.

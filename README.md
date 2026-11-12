@@ -17,6 +17,7 @@ Full documentation, including **installation**, **usage**, and **pretrained mode
  - Multi-fidelity training for combining multiple databases with different calculation settings
  - Fine-tuning with forgetting prevention (experience replay + Elastic Weight Consolidation) for continual learning
  - [Tensor product accelerators](https://sevennet.readthedocs.io/en/latest/user_guide/accelerator.html)
+ - Apple GPU (Metal) acceleration on Macs with Apple silicon, for inference, training and serial LAMMPS
 
 
 ## Pretrained Models
