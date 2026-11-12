@@ -36,8 +36,10 @@ class SevenNetCalculator(Calculator):
         enable_flash: bool = False,
         enable_oeq: bool = False,
         enable_lunatp: bool = False,
+        enable_mps: Optional[bool] = None,
         compute_atomic_virial: bool = False,
         sevennet_config: Optional[Dict] = None,  # Not used in logic, just meta info
+        mps_edge_bucket: int = 256,
         **kwargs,
     ) -> None:
         """Initialize SevenNetCalculator.
@@ -67,10 +69,19 @@ class SevenNetCalculator(Calculator):
             if True, use OpenEquivariance to accelerate inference.
         enable_lunatp: bool, default=False
             if True, use LunaTP to accelerate inference.
+        enable_mps: bool | None, default=None
+            Apple GPU (device='mps'): if True, run supported modules in fused Metal
+            kernels (see sevenn/nn/mps_opt.py); if False, run the reference e3nn
+            code. None means True on device='mps', unless the environment variable
+            SEVENNET_ENABLE_MPS is '0'. True with device='auto' selects 'mps';
+            True on another device is an error.
         sevennet_config: dict | None, default=None
             Not used, but can be used to carry meta information of this calculator
         compute_atomic_virial: bool, default=False
             If True, request per-atom virial output (`stresses`) at runtime.
+        mps_edge_bucket: int, default=256
+            Apple GPU with the fused kernels: pad the edge list to a multiple of
+            this, so tensor shapes repeat in MD. 0 or 1 disables the padding.
         """
         super().__init__(**kwargs)
         self.sevennet_config = None
@@ -93,8 +104,18 @@ class SevenNetCalculator(Calculator):
         enable_flash = os.getenv('SEVENNET_ENABLE_FLASH') == '1' or enable_flash
         enable_oeq = os.getenv('SEVENNET_ENABLE_OEQ') == '1' or enable_oeq
         enable_lunatp = os.getenv('SEVENNET_ENABLE_LUNATP') == '1' or enable_lunatp
+        if enable_mps is None and os.getenv('SEVENNET_ENABLE_MPS') == '0':
+            enable_mps = False
+        if enable_mps and isinstance(device, str) and device == 'auto':
+            device = 'mps'
+        on_mps = not (isinstance(device, str) and device == 'auto') and (
+            torch.device(device).type == 'mps'
+        )
+        use_mps = enable_mps if enable_mps is not None else on_mps
 
-        if not (enable_cueq or enable_flash or enable_oeq or enable_lunatp):
+        if not (
+            enable_cueq or enable_flash or enable_oeq or enable_lunatp or use_mps
+        ):
             util.warn_no_tp_accelerator('SevenNetCalculator')
 
         if enable_cueq and file_type == 'model_instance':
@@ -115,6 +136,12 @@ class SevenNetCalculator(Calculator):
                 'lunatp set to False'
             )
             enable_lunatp = False
+
+        if use_mps and (enable_cueq or enable_flash or enable_oeq or enable_lunatp):
+            raise ValueError(
+                'enable_mps runs on the Apple GPU: it cannot be combined with '
+                'cuEquivariance, FlashTP, OpenEquivariance or LunaTP'
+            )
 
         if isinstance(device, str):  # TODO: do we really need this?
             if device == 'auto':
@@ -186,6 +213,16 @@ class SevenNetCalculator(Calculator):
 
         self.model.to(self.device)
         self.model.eval()
+        self.mps_runtime = None
+        if enable_mps or self.device.type == 'mps':
+            from sevenn.nn.mps_opt import MpsRuntime
+
+            self.mps_runtime = MpsRuntime.for_calculator(
+                self,
+                enable_mps,
+                mps_edge_bucket,
+                is_instance=isinstance(model, AtomGraphSequential),
+            )
         self.implemented_properties = [
             'free_energy',
             'energy',
@@ -236,16 +273,23 @@ class SevenNetCalculator(Calculator):
         Calculator.calculate(self, atoms, properties, system_changes)
         if atoms is None:
             raise ValueError('No atoms to evaluate')
-        data = AtomGraphData.from_numpy_dict(
-            unlabeled_atoms_to_graph(atoms, self.cutoff, with_shift=False)
-        )
+        graph = unlabeled_atoms_to_graph(atoms, self.cutoff, with_shift=False)
+        if self.mps_runtime is not None:
+            graph = self.mps_runtime.prepare(graph)
+        data = AtomGraphData.from_numpy_dict(graph)
         if self.modal:
             data[KEY.DATA_MODALITY] = self.modal
 
         data.to(self.device)  # type: ignore
 
-        output = self.model(data)
+        try:
+            output = self.model(data)
+        finally:
+            if self.mps_runtime is not None:
+                self.mps_runtime.finish()
         self.results = self.output_to_results(output)
+        if self.mps_runtime is not None:
+            self.results['num_edges'] = self.mps_runtime.num_edges
 
 
 class SevenNetD3Calculator(SumCalculator):
