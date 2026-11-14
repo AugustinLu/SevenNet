@@ -1445,3 +1445,157 @@ def test_sevenn_train_with_enable_mps(tmp_path, monkeypatch):
     assert len(reports) == 1 and reports[0]['conv_fused'] > 0
     ckpt = torch.load(tmp_path / 'checkpoint_best.pth', weights_only=False)
     assert ckpt['config']['device'] == 'mps'
+
+
+# ---- padded batches: training and `sevenn inference` ----
+
+
+def _batch(n=3):
+    from torch_geometric.data import Batch
+
+    return Batch.from_data_list(
+        [_graph(seed=s, sheared=s % 2 == 1) for s in range(1, n + 1)]
+    )
+
+
+def _step(model, batch, pad=None):
+    """Outputs and parameter gradients of a force-and-stress loss, as in training."""
+    model.zero_grad()
+    b = batch.clone().to('mps')
+    out = model(pad(b) if pad is not None else b)
+    loss = (
+        out[KEY.PRED_TOTAL_ENERGY].pow(2).mean()
+        + out[KEY.PRED_FORCE].pow(2).mean()
+        + out[KEY.PRED_STRESS].pow(2).mean()
+    )
+    loss.backward()
+    vals = {
+        k: out[k].detach().cpu()
+        for k in KEYS
+        if k in out and k != KEY.ATOMIC_ENERGY
+    }
+    grads = {
+        n: p.grad.detach().cpu().clone()
+        for n, p in model.named_parameters()
+        if p.grad is not None
+    }
+    return vals, grads, int(out[KEY.EDGE_IDX].shape[1])
+
+
+class _EnergyLoss:
+    def get_loss(self, out, model=None):
+        return out[KEY.PRED_TOTAL_ENERGY].pow(2).mean()
+
+
+@needs_mps
+@pytest.mark.parametrize('lmax', [1, 2])
+def test_padded_batch_gives_the_same_training_step(lmax):
+    from sevenn.nn import mps_opt
+
+    model = _build(_config(lmax=lmax)).to('mps')
+    rep = mps_opt.enable(model)
+    assert rep['conv_e3nn'] == 0
+    model.set_is_batch_data(True)
+    model.train()
+    pad = mps_opt.BatchPadder(model, bucket=64)
+    assert pad.bucket == 64
+    batch = _batch()
+    n_real = int(batch[KEY.EDGE_IDX].shape[1])
+    assert n_real % 64 != 0
+    ref, gref, _ = _step(model, batch)
+    got, ggot, n_all = _step(model, batch, pad)
+    assert n_all % 64 == 0 and n_all > n_real
+    assert model._mps_plan.num_real == n_real  # the kernels saw only the real edges
+    _close(ref, got, rel=1e-5)
+    assert gref.keys() == ggot.keys()
+    for n in gref:
+        scale = max(float(gref[n].abs().max()), 1e-3)
+        assert float((gref[n] - ggot[n]).abs().max()) < 1e-5 * scale, n
+
+
+@needs_mps
+def test_trainer_pads_every_batch(monkeypatch):
+    from torch_geometric.loader import DataLoader
+
+    from sevenn.train.trainer import Trainer
+
+    monkeypatch.delenv('SEVENNET_ENABLE_MPS', raising=False)
+    tr = Trainer(
+        _build(_config()), [(_EnergyLoss(), 1.0)], torch.optim.Adam, device='mps'
+    )
+    assert tr._pad is not None and tr._pad.bucket == 256
+    seen = []
+    fwd = tr.model.forward
+    monkeypatch.setattr(
+        tr.model,
+        'forward',
+        lambda d: seen.append(d[KEY.EDGE_IDX].shape[1]) or fwd(d),
+    )
+    graphs = [_graph(seed=s, sheared=s % 2 == 1) for s in range(1, 6)]
+    loader = DataLoader(graphs, batch_size=2, shuffle=True)
+    tr.run_one_epoch(loader, is_train=False)
+    assert seen and all(e % 256 == 0 for e in seen), seen
+    seen.clear()
+    tr.train_one_batch(next(iter(loader)))
+    assert len(seen) == 1 and seen[0] % 256 == 0, seen
+
+
+@needs_mps
+def test_reewc_trainer_pads_the_memory_batches_too(monkeypatch):
+    from torch_geometric.loader import DataLoader
+
+    from sevenn.train.reewc.trainer import ReewcTrainer
+
+    monkeypatch.delenv('SEVENNET_ENABLE_MPS', raising=False)
+    graphs = [_graph(seed=s, sheared=s % 2 == 1) for s in range(1, 6)]
+    tr = ReewcTrainer(
+        _build(_config()),
+        [(_EnergyLoss(), 1.0)],
+        torch.optim.Adam,
+        device='mps',
+        memory_loader=DataLoader(graphs[3:], batch_size=2),
+    )
+    assert tr._pad is not None
+    seen = []
+    fwd = tr.model.forward
+    monkeypatch.setattr(
+        tr.model,
+        'forward',
+        lambda d: seen.append(d[KEY.EDGE_IDX].shape[1]) or fwd(d),
+    )
+    tr.run_one_epoch(DataLoader(graphs[:3], batch_size=2), is_train=True)
+    assert len(seen) == 4 and all(e % 256 == 0 for e in seen), seen
+
+
+@needs_mps
+def test_unpad_restores_the_edges_of_an_output():
+    from sevenn.nn import mps_opt
+
+    model = _build(_config()).to('mps')
+    mps_opt.enable(model)
+    model.set_is_batch_data(True)
+    model.eval()
+    pad = mps_opt.BatchPadder(model, bucket=64)
+    batch = _batch().to('mps')
+    n_real = int(batch[KEY.EDGE_IDX].shape[1])
+    n_atoms = int(batch[KEY.POS].shape[0])
+    out = pad.unpad(model(pad(batch.clone())), n_real)
+    assert out[KEY.EDGE_IDX].shape[1] == n_real
+    assert out[KEY.EDGE_VEC].shape[0] == n_real
+    assert out[KEY.POS].shape[0] == n_atoms
+    ref = model(batch.clone())
+    assert torch.equal(out[KEY.EDGE_IDX].cpu(), ref[KEY.EDGE_IDX].cpu())
+
+
+@needs_mps
+def test_padder_is_off_when_a_convolution_stays_on_e3nn():
+    from sevenn.nn import mps_opt
+
+    model = _build(_config()).to('mps')
+    mps_opt.enable(model)
+    conv = next(
+        m for m in model.modules() if isinstance(m, mps_opt.FusedConvolution)
+    )
+    conv.__class__ = mps_opt.IrrepsConvolution
+    with pytest.warns(UserWarning, match='edge padding of batches disabled'):
+        assert mps_opt.BatchPadder(model).bucket == 0

@@ -163,6 +163,7 @@ print(calc.mps_runtime.report)  # which modules run in kernels
 sevenn train input.yaml --enable_mps
 sevenn inference checkpoint_best.pth structures/* --enable_mps
 ```
+Training and `sevenn inference` pad each batch to a multiple of 256 edges with edges the kernels never visit, so results and gradients are those of the unpadded batch. PyTorch compiles and keeps a graph for every new tensor shape on the Apple GPU; without the padding, a shuffled data set brings a new edge count almost every batch and memory grows by about a gigabyte a minute.
 For LAMMPS on a Mac, see [LAMMPS: PyTorch](./lammps_torch.md#apple-gpu-serial).
 
 :::{note}
