@@ -15,6 +15,7 @@ SevenNet (Scalable EquiVariance-Enabled Neural Network) is a graph neural networ
 * Support for the Python Atomic Simulation Environment (ASE) calculator
 * GPU-parallelized molecular dynamics with LAMMPS
 * CUDA-accelerated D3 (van der Waals) dispersion
+* Apple GPU (Metal) acceleration on Macs with Apple silicon, for inference, training and serial LAMMPS
 * Multi-fidelity training for combining multiple databases with different calculation settings
 * Fine-tuning with forgetting prevention (Experience replay + Elastic Weight Consolidation) for continual learning
 
@@ -27,6 +28,8 @@ Then install SevenNet via:
 .. code-block:: bash
 
     pip install sevenn
+
+On a Mac with Apple silicon, this is all the Apple GPU needs: its kernels are compiled by PyTorch (>= 2.7) at run time. See :doc:`user_guide/accelerator`.
 
 For acceleration and LAMMPS integration, refer to the the installation guides below.
 

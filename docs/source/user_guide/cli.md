@@ -49,7 +49,7 @@ Enable cuEquivariance, flashTP, or OpenEquivariance while training by adding the
 ```bash
 sevenn train input.yaml -s --enable_cueq # or --enable_flash or --enable_oeq
 ```
-On a Mac with Apple silicon, `--enable_mps` trains on the GPU with fused Metal kernels.
+On a Mac with Apple silicon, `--enable_mps` trains on the GPU with fused Metal kernels. It uses one GPU and cannot be combined with `-d`.
 
 Please note that `batch_size` in `input.yaml` refers to the per-GPU batch size.
 

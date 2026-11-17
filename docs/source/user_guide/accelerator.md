@@ -4,9 +4,10 @@ This document describes available accelerator integrations in SevenNet and their
 
 :::{caution}
 We do not support CuEquivariance and LunaTP for [LAMMPS: Torch](./lammps_torch.md). You must use [LAMMPS: ML-IAP](./lammps_mliap.md) for CuEquivariance and LunaTP.
+The Apple GPU kernels run in LAMMPS through a serial pair style of their own, described in [LAMMPS: Torch](./lammps_torch.md#apple-gpu-serial).
 :::
 
-[FlashTP](https://openreview.net/forum?id=wiQe95BPaB), [CuEquivariance](https://github.com/NVIDIA/cuEquivariance), and [OpenEquivariance](https://github.com/PASSIONLab/OpenEquivariance) provide acceleration for both SevenNet training and inference.
+[FlashTP](https://openreview.net/forum?id=wiQe95BPaB), [CuEquivariance](https://github.com/NVIDIA/cuEquivariance), and [OpenEquivariance](https://github.com/PASSIONLab/OpenEquivariance) provide acceleration for both SevenNet training and inference on NVIDIA GPUs. On Macs with Apple silicon, SevenNet's own [Metal kernels](#apple-gpu-metal) do the same on the Apple GPU.
 
 :::{tip}
 For small systems, FlashTP with [LAMMPS: Torch](./lammps_torch.md) shows performance advantage over cuEquivariance with [LAMMPS: ML-IAP](./lammps_mliap.md).
@@ -152,19 +153,40 @@ The kernels are generated from the e3nn modules of the model when the calculator
 - PyTorch >= 2.7, tested on 2.10 to 2.15. On 2.7 to 2.9 a model instance cannot be copied, so `file_type='model_instance'` runs the reference code with a warning; checkpoints use the kernels. With PyTorch 2.6 SevenNet runs the reference e3nn code on the GPU, with a warning; before 2.6 the Apple GPU cannot run SevenNet.
 - float32 only: the Apple GPU has no float64. Shift and scale kept in float64 are converted to float32 when the model moves to the GPU.
 
+### Installation
+Nothing beyond SevenNet itself: `pip install sevenn` with the PyTorch wheels for macOS, which include the Apple GPU backend. `python -c "import torch; print(torch.backends.mps.is_available())"` should print `True`.
+
 ### Usage
 ```python
 from sevenn.calculator import SevenNetCalculator
 calc = SevenNetCalculator(model='7net-0', device='mps')  # fused kernels by default on 'mps'
 print(calc.mps_runtime.report)  # which modules run in kernels
 ```
-`enable_mps=False`, or the environment variable `SEVENNET_ENABLE_MPS=0`, runs the reference e3nn code on the same GPU. `enable_mps=True` with `device='auto'` selects the Apple GPU; with another device it is an error. The Apple kernels are never imported on CPU or CUDA. Training and batch inference use the kernels too:
+`device='auto'` (the default) picks CUDA or the CPU, never the Apple GPU: ask for it with `device='mps'`, or with `enable_mps=True`, which selects the Apple GPU when the device is `'auto'` and is an error with any other device. `enable_mps=False`, or the environment variable `SEVENNET_ENABLE_MPS=0`, runs the reference e3nn code on the same GPU. The Apple kernels are never imported on CPU or CUDA. Training and batch inference use the kernels too:
 ```bash
 sevenn train input.yaml --enable_mps
 sevenn inference checkpoint_best.pth structures/* --enable_mps
 ```
 Training and `sevenn inference` pad each batch to a multiple of 256 edges with edges the kernels never visit, so results and gradients are those of the unpadded batch. PyTorch compiles and keeps a graph for every new tensor shape on the Apple GPU; without the padding, a shuffled data set brings a new edge count almost every batch and memory grows by about a gigabyte a minute.
 For LAMMPS on a Mac, see [LAMMPS: PyTorch](./lammps_torch.md#apple-gpu-serial).
+
+### Performance
+One ASE step (energy, forces and stress) on a MacBook Pro with an M5 Pro (16-core GPU), PyTorch 2.15, tetragonal ZrO₂:
+
+| model | atoms | reference e3nn code, same GPU | fused kernels |
+|---|---|---|---|
+| 7net-nano-5.5 | 768 | 321 ms | 31 ms |
+| 7net-0 | 96 | 139 ms | 15 ms |
+| 7net-0 | 768 | 972 ms | 62 ms |
+| 7net-l3i5 | 768 | 2,594 ms | 100 ms |
+
+Forces agree with the CPU to within 5 × 10⁻⁶ eV/Å.
+
+### Not available on the Apple GPU
+- The CUDA D3 dispersion, in ASE and in LAMMPS.
+- Distributed training (`sevenn train -d`): `--enable_mps` trains on one GPU.
+- Parallel LAMMPS (`e3gnn/parallel`), LAMMPS: ML-IAP, and deployed TorchScript models (`sevenn get_model`).
+- TorchSim: its `SevenNetModel` does not use the Metal kernels yet.
 
 :::{note}
 - The kernels are not available in a deployed TorchScript model. The LAMMPS pair style for Apple GPUs therefore loads the checkpoint itself.

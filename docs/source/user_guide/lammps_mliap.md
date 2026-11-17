@@ -4,6 +4,10 @@
 Parallel execution of LAMMPS/ML-IAP using CUDA-aware MPI is supported, but not yet sufficiently tested. For multi-rank LAMMPS runs, use the TorchScript `e3gnn/parallel` workflow described in {doc}`lammps_torch`.
 :::
 
+:::{note}
+ML-IAP runs SevenNet through Kokkos on NVIDIA GPUs. On a Mac with Apple silicon, use the serial [Apple GPU pair style](./lammps_torch.md#apple-gpu-serial) instead.
+:::
+
 ## Requirements
 - cython == 3.0.11
 - cupy-cuda12x or cupy-cuda13x
