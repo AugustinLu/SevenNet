@@ -10,10 +10,20 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from ase.build import bulk
-from test_mps_opt import _build, _config, needs_mps
 
 from sevenn.calculator import SevenNetCalculator
+from sevenn.nn.mps_opt import mps_torch_supported
+
+needs_mps = pytest.mark.skipif(
+    not (
+        torch.backends.mps.is_available()
+        and mps_torch_supported()
+        and hasattr(torch.mps, 'compile_shader')
+    ),
+    reason='needs an Apple GPU and PyTorch 2.7 or later (fused kernels)',
+)
 
 
 @needs_mps
@@ -21,9 +31,7 @@ def test_lammps_bridge_equals_the_calculator(tmp_path):
     lammps = pytest.importorskip('lammps')
     from sevenn.lammps_external import run_input
 
-    calc = SevenNetCalculator(
-        _build(_config()), file_type='model_instance', device='mps'
-    )
+    calc = SevenNetCalculator('7net-0', device='mps')
     a = 5.63
     at = bulk('NaCl', 'rocksalt', a=a, cubic=True)
     at.rattle(0.05, seed=2)
@@ -101,18 +109,81 @@ def test_pair_style_equals_the_calculator(tmp_path):
     at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
     at.rattle(0.05, seed=2)
     lmp = _pair_lammps(tmp_path, at, '7net-0 Na Cl')
-    lmp.command('thermo_style custom step pe press pxx pyy pzz pxy pxz pyz')
     lmp.command('compute pea all pe/atom')
+    lmp.command('compute pesum all reduce sum c_pea')  # tallies per-atom energies
+    lmp.command(
+        'thermo_style custom step pe c_pesum press pxx pyy pzz pxy pxz pyz'
+    )
     lmp.command('run 0')
     pe, press = lmp.get_thermo('pe'), lmp.get_thermo('pxx')
     ids = lmp.numpy.extract_atom('id')[: len(at)].copy()
     fl = lmp.numpy.extract_atom('f')[: len(at)].copy()
+    eatom = lmp.numpy.extract_compute('pea', 1, 1)[: len(at)].copy()
     lmp.close()
     calc = SevenNetCalculator('7net-0', device='mps')
     at.calc = calc
     assert abs(pe - at.get_potential_energy()) < 1e-3
     assert np.abs(fl[np.argsort(ids)] - at.get_forces()).max() < 2e-4
     assert abs(press - (-at.get_stress()[0] * 1602176.634)) < 2.0
+    assert np.abs(eatom[np.argsort(ids)] - calc.results['energies']).max() < 1e-4
+
+
+@needs_mps
+@needs_plugin
+def test_pair_style_multi_fidelity(tmp_path):
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.rattle(0.05, seed=5)
+    lmp = _pair_lammps(tmp_path, at, '7net-mf-0 modal PBE Na Cl')
+    lmp.command('run 0')
+    pe = lmp.get_thermo('pe')
+    lmp.close()
+    at.calc = SevenNetCalculator('7net-mf-0', device='mps', modal='PBE')
+    assert abs(pe - at.get_potential_energy()) < 1e-3
+
+
+@needs_mps
+@needs_plugin
+@pytest.mark.parametrize('case', ['include', 'hybrid'])
+def test_pair_style_refuses_include_and_hybrid(tmp_path, case):
+    lammps = pytest.importorskip('lammps')
+    from ase.io import write
+
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    write(
+        tmp_path / 'at.data',
+        at,
+        format='lammps-data',
+        specorder=['Na', 'Cl'],
+        atom_style='atomic',
+    )
+    lines = [f'plugin load {_PLUGIN}', 'units metal', 'atom_style atomic']
+    if case == 'include':
+        lines.append('atom_modify first na')
+    lines += [
+        f'read_data {tmp_path / "at.data"}',
+        'mass 1 22.99',
+        'mass 2 35.45',
+        'group na type 1',
+    ]
+    if case == 'include':
+        lines += [
+            'pair_style e3gnn',
+            'pair_coeff * * 7net-0 Na Cl',
+            'neigh_modify include na',
+        ]
+    else:
+        lines += [
+            'pair_style hybrid e3gnn zero 5.0',
+            'pair_coeff * * e3gnn 7net-0 Na Cl',
+            'pair_coeff * * zero',
+        ]
+    lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
+    for line in lines:
+        lmp.command(line)
+    message = 'neigh_modify include' if case == 'include' else 'hybrid'
+    with pytest.raises(Exception, match=message):
+        lmp.command('run 0')
+    lmp.close()
 
 
 @needs_mps

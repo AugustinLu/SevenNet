@@ -50,8 +50,8 @@ from .sequential import AtomGraphSequential
 ALL_PARTS = frozenset({'conv', 'linear', 'selfconn', 'gate'})
 # train mode: up to this many atom types, multiply by every type's matrix and select
 SELFCONN_ALL_TYPES = 8
-# above this PyTorch's mm beats the sparse kernel (M: 133 -> 100 ms at 324 atoms; S
-# unaffected)
+# above this many nonzeros PyTorch's dense mm beats the sparse kernel (measured on
+# an M5 Pro with a larger model: 133 -> 100 ms per step at 324 atoms)
 LINEAR_MAX_NNZ = 100_000
 
 
@@ -72,7 +72,7 @@ def _matrix_triplets(fn, ni: int, batch: int = 2048):
     return np.concatenate(II), np.concatenate(OO), np.concatenate(VV)
 
 
-def _weight_map(probe, param, run):
+def _weight_map(param, run):
     """Which entry of `param` and which constant give each nonzero output of the
     linear map `run`, read off by probing: weights all one give the constants,
     weights 1, 2, 3, ... the index, and random weights check that each nonzero output
@@ -263,7 +263,7 @@ class FusedLinear(_DerivedTables, Linear):
                 if probe.bias.numel():
                     probe.bias.zero_()
             mat = _TrainMatrix(
-                *_weight_map(probe, probe.weight, lambda: _by_rows(probe, ni)),
+                *_weight_map(probe.weight, lambda: _by_rows(probe, ni)),
                 (ni, no),
                 self.weight.device,
             )
@@ -273,7 +273,6 @@ class FusedLinear(_DerivedTables, Linear):
                     probe.weight.zero_()
                 vec = _TrainMatrix(
                     *_weight_map(
-                        probe,
                         probe.bias,
                         lambda: probe(torch.zeros(1, ni, dtype=torch.float64))[0],
                     ),
@@ -705,7 +704,8 @@ def enable(model, parts='all') -> Dict[str, int]:
                 m._kernels, m._plan = FusedTP(m.convolution), plan
                 m.__class__ = FusedConvolution
                 report['conv_fused'] += 1
-            except (NotImplementedError, ValueError) as e:
+            except (NotImplementedError, ValueError, RuntimeError) as e:
+                # RuntimeError: the generated shader did not compile
                 warnings.warn(f'convolution keeps the e3nn code on the GPU: {e}')
                 report['conv_e3nn'] += 1
         elif (
@@ -906,8 +906,9 @@ class MpsRuntime:
             except Exception as e:  # e.g. a TorchScript activation cannot be copied
                 if requested is not None:
                     raise ValueError(
-                        f'enable_mps on a model instance needs a copy of it: '
-                        f'{e}'
+                        f'a model instance on the Apple GPU is copied first, and '
+                        f'this one cannot be copied ({e}); pass a checkpoint '
+                        f'instead'
                     ) from e
                 warnings.warn(
                     f'running the reference e3nn code on the GPU, the model cannot '
@@ -1034,6 +1035,9 @@ def padding_is_safe(model, cutoff: float, all_fused: bool = False) -> bool:
     vec = torch.tensor(
         [[cutoff, 0.0, 0.0]], dtype=torch.float32, device=device, requires_grad=True
     )
+    if 'edge_embedding' not in model._modules:
+        warnings.warn('edge padding disabled: the model has no edge_embedding')
+        return False
     data = model._modules['edge_embedding']({KEY.EDGE_VEC: vec})
     emb = data[KEY.EDGE_EMBEDDING]
     tensors = [emb] + [

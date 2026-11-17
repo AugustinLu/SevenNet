@@ -153,6 +153,7 @@ def inference(
     enable_flash: bool = False,
     enable_oeq: bool = False,
     enable_lunatp: bool = False,
+    enable_mps: Optional[bool] = None,
     **data_kwargs,
 ) -> None:
     """
@@ -172,6 +173,9 @@ def inference(
         device: device to evaluate, defaults to 'auto'
         batch_size: batch size for inference
         save_grpah: if True, save preprocessed graph to output dir
+        enable_mps: Apple GPU (device 'mps'): True or False to run the fused
+            Metal kernels or the reference e3nn code. None runs the kernels
+            unless the environment variable SEVENNET_ENABLE_MPS is '0'.
         data_kwargs: keyword arguments used when reading targets,
             for example, given index='-1', only the last snapshot
             will be evaluated if it was ASE readable.
@@ -238,13 +242,17 @@ def inference(
     model.set_is_batch_data(True)
     model.eval()
     on_mps = torch.device(device).type == 'mps'
+    if enable_mps and not on_mps:
+        raise ValueError(f"enable_mps=True needs device 'mps', got {device}")
     pad = None
     if on_mps:
         # Apple GPU: fused Metal kernels, as in the calculator
         from sevenn.nn.mps_opt import check_torch, enable_or_warn
 
         check_torch('inference')
-        if os.environ.get('SEVENNET_ENABLE_MPS') != '0':
+        if enable_mps is None:
+            enable_mps = os.environ.get('SEVENNET_ENABLE_MPS') != '0'
+        if enable_mps:
             if enable_or_warn(model, 'inference') is not None:
                 from sevenn.nn.mps_opt import BatchPadder
 

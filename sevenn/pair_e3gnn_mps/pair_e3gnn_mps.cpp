@@ -115,9 +115,14 @@ void PairE3GNNMps::coeff(int narg, char **arg) {
 
   PyObject *cut = PyObject_GetAttrString(driver, "cutoff");
   PyObject *banner = PyObject_GetAttrString(driver, "banner");
-  if (!cut || !banner) fail("reading the model");
-  cutoff = PyFloat_AsDouble(cut);
-  utils::logmesg(lmp, "{}\n", PyUnicode_AsUTF8(banner));
+  cutoff = cut ? PyFloat_AsDouble(cut) : -1.0;
+  const char *text = banner ? PyUnicode_AsUTF8(banner) : nullptr;
+  if (!cut || !banner || !text || PyErr_Occurred()) {
+    Py_XDECREF(cut);
+    Py_XDECREF(banner);
+    fail("reading the model");
+  }
+  utils::logmesg(lmp, "{}\n", text);
   Py_DECREF(cut);
   Py_DECREF(banner);
 
@@ -134,6 +139,8 @@ void PairE3GNNMps::init_style() {
   if (strcmp(update->unit_style, "metal") != 0)
     error->all(FLERR, std::string("e3gnn needs units metal, got ") + update->unit_style);
   if (neighbor->nex_type || neighbor->nex_group || neighbor->nex_mol) error->all(FLERR, "e3gnn builds its own edges and cannot honour neigh_modify exclude");
+  if (neighbor->includegroup) error->all(FLERR, "e3gnn builds its own edges and cannot honour neigh_modify include");
+  if (force->pair != this) error->all(FLERR, "e3gnn on the Apple GPU takes every atom: it cannot be a sub-style of pair_style hybrid");
   if (atom->natoms == 0) error->all(FLERR, "e3gnn needs at least one atom");
 }
 
@@ -143,6 +150,7 @@ void PairE3GNNMps::compute(int eflag, int vflag) {
   ev_init(eflag, vflag);
   if (vflag_atom) error->all(FLERR, "e3gnn: atomic stress is not supported");
   const int nlocal = atom->nlocal;
+  if (nlocal == 0) return;  // all atoms lost, with thermo_modify lost ignore
   double virial_now[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   double energy = 0.0;
   {
@@ -153,8 +161,10 @@ void PairE3GNNMps::compute(int eflag, int vflag) {
     PyObject *eper = eflag_atom ? view(eatom, 8L * nlocal, PyBUF_WRITE) : (Py_INCREF(Py_None), Py_None);
     PyObject *vir = view(virial_now, sizeof(virial_now), PyBUF_WRITE);
     PyObject *box = box_tuple(domain);
-    PyObject *out = PyObject_CallMethod(driver, "compute", "iOOOOOO", nlocal, x, f, type, eper, vir, box);
-    for (PyObject *o : {x, f, type, eper, vir, box}) Py_DECREF(o);
+    PyObject *out = nullptr;
+    if (x && f && type && eper && vir && box)
+      out = PyObject_CallMethod(driver, "compute", "iOOOOOO", nlocal, x, f, type, eper, vir, box);
+    for (PyObject *o : {x, f, type, eper, vir, box}) Py_XDECREF(o);
     if (!out) fail("computing forces");
     energy = PyFloat_AsDouble(out);
     Py_DECREF(out);

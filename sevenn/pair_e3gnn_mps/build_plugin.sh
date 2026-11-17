@@ -12,6 +12,10 @@ v = dict(LMP=os.path.join(os.path.dirname(lammps.__file__), 'include', 'lammps')
 print('\n'.join(f'{k}={shlex.quote(x)}' for k, x in v.items()))
 PYEOF
 )"
+if [ ! -f "$PYLIB/libpython$PYVER.dylib" ]; then
+  echo "build_plugin.sh: $PYLIB/libpython$PYVER.dylib not found; the plugin needs a Python built with a shared libpython (conda, Homebrew and python.org Pythons have one)" >&2
+  exit 1
+fi
 clang++ -std=c++17 -O2 -fPIC -bundle -undefined dynamic_lookup -w \
   -I"$HERE" -I"$HERE/mpi_stub" -I"$LMP" -I"$PYINC" -DLAMMPS_SMALLBIG \
   -DSEVENN_DEFAULT_PYTHON="\"$EXE\"" -DSEVENN_DEFAULT_ROOT="\"$(cd "$HERE/../.." && pwd)\"" \

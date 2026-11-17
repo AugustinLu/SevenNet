@@ -162,12 +162,12 @@ from sevenn.calculator import SevenNetCalculator
 calc = SevenNetCalculator(model='7net-0', device='mps')  # fused kernels by default on 'mps'
 print(calc.mps_runtime.report)  # which modules run in kernels
 ```
-`device='auto'` (the default) picks CUDA or the CPU, never the Apple GPU: ask for it with `device='mps'`, or with `enable_mps=True`, which selects the Apple GPU when the device is `'auto'` and is an error with any other device. `enable_mps=False`, or the environment variable `SEVENNET_ENABLE_MPS=0`, runs the reference e3nn code on the same GPU. The Apple kernels are never imported on CPU or CUDA. Training and batch inference use the kernels too:
+`device='auto'` (the default) picks CUDA or the CPU, never the Apple GPU: ask for it with `device='mps'`, or with `enable_mps=True`, which selects the Apple GPU when the device is `'auto'` and is an error with any other device. `enable_mps=False`, or the environment variable `SEVENNET_ENABLE_MPS=0`, runs the reference e3nn code on the same GPU. An explicit `enable_mps` argument (`SevenNetCalculator`, `Trainer`, `sevenn.scripts.inference.inference`) takes precedence over the environment variable; on the command line, `--enable_mps` selects the Apple GPU and `SEVENNET_ENABLE_MPS=0` still turns the kernels off. The Apple kernels are never imported on CPU or CUDA. Training and batch inference use the kernels too:
 ```bash
 sevenn train input.yaml --enable_mps
 sevenn inference checkpoint_best.pth structures/* --enable_mps
 ```
-Training and `sevenn inference` pad each batch to a multiple of 256 edges with edges the kernels never visit, so results and gradients are those of the unpadded batch. PyTorch compiles and keeps a graph for every new tensor shape on the Apple GPU; without the padding, a shuffled data set brings a new edge count almost every batch and memory grows by about a gigabyte a minute.
+Training and `sevenn inference` pad each batch to a multiple of 256 edges with edges the kernels never visit, so results and gradients are those of the unpadded batch. PyTorch compiles and keeps a graph for every new tensor shape on the Apple GPU; without the padding, a shuffled data set brings a new edge count almost every batch and memory grows by about a gigabyte a minute. The padding covers the edge count, which changes the most; batches with a new number of atoms still compile new graphs.
 For LAMMPS on a Mac, see [LAMMPS: PyTorch](./lammps_torch.md#apple-gpu-serial). Ready-to-run training and LAMMPS examples for Macs are in [`example_inputs_mps/`](https://github.com/MDIL-SNU/SevenNet/tree/main/example_inputs_mps) of the repository.
 
 ### Performance
@@ -180,7 +180,7 @@ One ASE step (energy, forces and stress) on a MacBook Pro with an M5 Pro (16-cor
 | 7net-0 | 768 | 972 ms | 62 ms |
 | 7net-l3i5 | 768 | 2,594 ms | 100 ms |
 
-Forces agree with the CPU to within 5 × 10⁻⁶ eV/Å.
+The reference runs are not padded. Forces agree with the CPU to within 6 × 10⁻⁶ eV/Å (96 atoms; 7net-nano-5.5, 7net-0, 7net-l3i5 and 7net-omni).
 
 ### Not available on the Apple GPU
 - The CUDA D3 dispersion, in ASE and in LAMMPS.

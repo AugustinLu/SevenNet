@@ -129,7 +129,7 @@ pair_coeff  * * 7net-0 Hf O
 A deployed model (`.pt`) cannot be used here. [`example_inputs_mps/md_serial_example`](https://github.com/MDIL-SNU/SevenNet/tree/main/example_inputs_mps/md_serial_example) is the serial example of `example_inputs/` set up this way.
 `modal NAME` before the chemical species selects the fidelity of a multi-fidelity model, e.g. `pair_coeff * * 7net-omni modal mpa Hf O`.
 
-Build LAMMPS with the pair style (no libtorch link is needed):
+Build LAMMPS with the pair style (no libtorch link is needed; tested with `stable_22Jul2025_update4`):
 ```bash
 git clone https://github.com/lammps/lammps.git lammps_sevenn --branch stable_22Jul2025_update4 --depth=1
 sevenn patch_lammps ./lammps_sevenn --enable_mps

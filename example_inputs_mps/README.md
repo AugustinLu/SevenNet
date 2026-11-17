@@ -17,7 +17,8 @@ sevenn inference checkpoint_best.pth '../../example_inputs/data/label_1/OUTCAR_*
 
 `pair_coeff` takes a checkpoint (`.pth`) or a pretrained name, not a deployed TorchScript model (`.pt`):
 TorchScript cannot hold the Metal kernels, so the pair style runs SevenNet from the checkpoint and there is no
-deployment step. `in.lmp` uses `7net-0`; `../training/checkpoint_best.pth` works too.
+deployment step. `in.lmp` uses `7net-0` (`../training/checkpoint_best.pth` works too) and reads the HfO2 cell
+of `example_inputs/md_serial_example`.
 
 Build LAMMPS with the Apple GPU pair style (no libtorch link is needed):
 ```bash

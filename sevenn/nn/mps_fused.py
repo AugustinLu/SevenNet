@@ -32,6 +32,15 @@ from e3nn import o3
 _libs: Dict[str, object] = {}
 
 
+def _check_int32(where: str, *sizes: int) -> None:
+    """The kernels index buffers with 32-bit integers."""
+    if max(sizes) >= 2**31:
+        raise RuntimeError(
+            f'{where}: graph too large for the fused kernels (32-bit indices), use '
+            f'enable_mps=False'
+        )
+
+
 def _check_inputs(where: str, *checks) -> None:
     """Kernels read raw buffers with no bounds checks, so each (tensor, shape) must
     be float32 of that shape first."""
@@ -149,11 +158,7 @@ def generate_msl(tp: o3.TensorProduct, tol: float = 1e-7) -> str:
         is below the largest."""
         lines = []
         for m in sorted({m_of(i) for i in items}, reverse=True):
-            body = (
-                ' '.join(c for i, c in items.items() if m_of(i) == m)
-                if isinstance(items, dict)
-                else ''
-            )
+            body = ' '.join(c for i, c in items.items() if m_of(i) == m)
             lines.append(body if m == mul else f'if (u < {m}) {{ {body} }}')
         return '\n    '.join(lines)
 
@@ -506,17 +511,11 @@ class FusedUvu(_UvuFwd):
     @staticmethod
     def forward(ctx, x, y, w, K: FusedTP, plan: EdgePlan):
         # the kernels index with 32-bit integers
-        if (
-            max(
-                plan.num_edges * max(K.mul * K.ny, K.nw),
-                plan.num_nodes * max(K.nx, K.nout),
-            )
-            >= 2**31
-        ):
-            raise RuntimeError(
-                'graph too large for the fused kernels (32-bit indices), use '
-                'enable_mps=False'
-            )
+        _check_int32(
+            'convolution kernel',
+            plan.num_edges * max(K.mul * K.ny, K.nw),
+            plan.num_nodes * max(K.nx, K.nout),
+        )
         _check_inputs(
             'uvu kernel',
             (x, (plan.num_nodes, K.nx)),
@@ -612,6 +611,7 @@ class CsrMap:
 class CsrApply(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, M: CsrMap, types: Optional[torch.Tensor]):
+        _check_int32('linear kernel', x.shape[0] * max(M.ni, M.no))
         _check_inputs('linear kernel', (x, (x.shape[0], M.ni)))
         if M.nt > 1 and (
             types is None
@@ -712,6 +712,7 @@ class GateTables:
 class GateApply(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, T: GateTables):
+        _check_int32('gate kernel', x.shape[0] * max(T.n_in, T.nout))
         _check_inputs('gate kernel', (x, (x.shape[0], T.n_in)))
         x = x.contiguous()
         ctx.save_for_backward(x)

@@ -36,9 +36,9 @@ class SevenNetCalculator(Calculator):
         enable_flash: bool = False,
         enable_oeq: bool = False,
         enable_lunatp: bool = False,
-        enable_mps: Optional[bool] = None,
         compute_atomic_virial: bool = False,
         sevennet_config: Optional[Dict] = None,  # Not used in logic, just meta info
+        enable_mps: Optional[bool] = None,
         mps_edge_bucket: int = 256,
         **kwargs,
     ) -> None:
@@ -69,16 +69,16 @@ class SevenNetCalculator(Calculator):
             if True, use OpenEquivariance to accelerate inference.
         enable_lunatp: bool, default=False
             if True, use LunaTP to accelerate inference.
+        sevennet_config: dict | None, default=None
+            Not used, but can be used to carry meta information of this calculator
+        compute_atomic_virial: bool, default=False
+            If True, request per-atom virial output (`stresses`) at runtime.
         enable_mps: bool | None, default=None
             Apple GPU (device='mps'): if True, run supported modules in fused Metal
             kernels (see sevenn/nn/mps_opt.py); if False, run the reference e3nn
             code. None means True on device='mps', unless the environment variable
             SEVENNET_ENABLE_MPS is '0'. True with device='auto' selects 'mps';
             True on another device is an error.
-        sevennet_config: dict | None, default=None
-            Not used, but can be used to carry meta information of this calculator
-        compute_atomic_virial: bool, default=False
-            If True, request per-atom virial output (`stresses`) at runtime.
         mps_edge_bucket: int, default=256
             Apple GPU with the fused kernels: pad the edge list to a multiple of
             this, so tensor shapes repeat in MD. 0 or 1 disables the padding.
@@ -104,6 +104,10 @@ class SevenNetCalculator(Calculator):
         enable_flash = os.getenv('SEVENNET_ENABLE_FLASH') == '1' or enable_flash
         enable_oeq = os.getenv('SEVENNET_ENABLE_OEQ') == '1' or enable_oeq
         enable_lunatp = os.getenv('SEVENNET_ENABLE_LUNATP') == '1' or enable_lunatp
+        if enable_mps is not None and not isinstance(enable_mps, bool):
+            raise ValueError(
+                f'enable_mps must be True, False or None, got {enable_mps!r}'
+            )
         if enable_mps is None and os.getenv('SEVENNET_ENABLE_MPS') == '0':
             enable_mps = False
         if enable_mps and isinstance(device, str) and device == 'auto':
@@ -112,6 +116,8 @@ class SevenNetCalculator(Calculator):
             torch.device(device).type == 'mps'
         )
         use_mps = enable_mps if enable_mps is not None else on_mps
+        if enable_mps and not on_mps:  # before any checkpoint is loaded
+            raise ValueError(f"enable_mps=True needs device='mps', got {device}")
 
         if not (
             enable_cueq or enable_flash or enable_oeq or enable_lunatp or use_mps

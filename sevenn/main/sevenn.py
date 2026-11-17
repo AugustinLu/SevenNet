@@ -217,8 +217,8 @@ def cmd_parser_train(parser):
         '-mps',
         '--enable_mps',
         help=(
-            'train on the Apple GPU with fused Metal kernels (device mps; '
-            'SEVENNET_ENABLE_MPS=0 for e3nn)'
+            'train on the Apple GPU (sets device mps, over the device of '
+            'input.yaml), with fused Metal kernels unless SEVENNET_ENABLE_MPS=0'
         ),
         action='store_true',
     )
@@ -317,7 +317,9 @@ def main():
     elif args.command in ['inference', 'inf']:
         inference_cmd.run(args)
     elif args.command == 'patch_lammps':
-        sys.exit(patch_lammps_cmd.run(args))
+        rc = patch_lammps_cmd.run(args)
+        if args.enable_mps:  # the CUDA patch keeps its exit status of 0
+            sys.exit(rc)
     elif args.command == 'preset':
         preset_cmd.run(args)
     elif args.command == 'lunatp_precompile':

@@ -15,7 +15,7 @@
   units            metal
   boundary         p p p
   # Create atoms.
-  read_data        ./res.dat
+  read_data        ../../example_inputs/md_serial_example/res.dat
   replicate 2 2 2
 
   # Define interatomic potential: the Apple GPU pair style, which needs LAMMPS

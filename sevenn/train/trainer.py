@@ -32,6 +32,9 @@ class Trainer:
         device: device to train model, defaults to 'auto'
         distributed: whether this is distributed training
         distributed_backend: torch DDP backend. Should be one of 'nccl', 'mpi'
+        enable_mps: Apple GPU (device 'mps'): True or False to run the fused Metal
+            kernels or the reference e3nn code. None (default) runs the kernels
+            unless the environment variable SEVENNET_ENABLE_MPS is '0'.
     """
 
     def __init__(
@@ -46,6 +49,7 @@ class Trainer:
         device: Union[torch.device, str] = 'auto',
         distributed: bool = False,
         distributed_backend: str = 'nccl',
+        enable_mps: Optional[bool] = None,
     ) -> None:
         if device == 'auto':
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -72,12 +76,16 @@ class Trainer:
         self.device = torch.device(device)
         self.distributed = distributed
         self._pad = None
+        if enable_mps and self.device.type != 'mps':
+            raise ValueError(f"enable_mps=True needs device 'mps', got {device}")
+        if enable_mps is None:
+            enable_mps = os.environ.get('SEVENNET_ENABLE_MPS') != '0'
         if self.device.type == 'mps':
             # Apple GPU: fused kernels in training and validation
             from sevenn.nn.mps_opt import check_torch, enable_or_warn
 
             check_torch('training')
-            if os.environ.get('SEVENNET_ENABLE_MPS') != '0':
+            if enable_mps:
                 if enable_or_warn(self.model, 'training') is not None:
                     # few batch shapes, or the MPS graph cache grows without bound
                     from sevenn.nn.mps_opt import BatchPadder

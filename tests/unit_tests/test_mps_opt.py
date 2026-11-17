@@ -24,8 +24,12 @@ from sevenn.nn.mps_opt import mps_torch_supported, pad_edges, padding_is_safe
 from sevenn.util import chemical_species_preprocess
 
 needs_mps = pytest.mark.skipif(
-    not (torch.backends.mps.is_available() and mps_torch_supported()),
-    reason='needs an Apple GPU and PyTorch 2.6 or later',
+    not (
+        torch.backends.mps.is_available()
+        and mps_torch_supported()
+        and hasattr(torch.mps, 'compile_shader')
+    ),
+    reason='needs an Apple GPU and PyTorch 2.7 or later (fused kernels)',
 )
 KEYS = (
     KEY.PRED_TOTAL_ENERGY,
@@ -466,7 +470,9 @@ def test_fused_linear_with_bias_and_gradients():
 
 
 @needs_mps
-def test_fused_gate_tables_and_gradients():
+@pytest.mark.parametrize('scale', [1.0, 100.0])
+def test_fused_gate_tables_and_gradients(scale):
+    # scale 100: exp and tanh of large arguments stay finite in the Metal kernels
     from sevenn.nn import mps_opt
 
     gate = Gate(
@@ -476,17 +482,16 @@ def test_fused_gate_tables_and_gradients():
         [torch.nn.functional.silu, torch.tanh],
         '2x1o+2x2e',
     ).to('mps')
-    x = torch.randn(6, gate.irreps_in.dim, device='mps', requires_grad=True)
+    x = (torch.randn(6, gate.irreps_in.dim, device='mps') * scale).requires_grad_()
     ref = gate(x)
     gref = torch.autograd.grad(ref.pow(2).sum(), x)[0]
     gate._tables = mps_opt._gate_tables(gate, 'mps')
     gate.__class__ = mps_opt.FusedGate
     out = gate(x)
-    assert float((ref - out).abs().max()) < 1e-6
-    assert (
-        float((gref - torch.autograd.grad(out.pow(2).sum(), x)[0]).abs().max())
-        < 1e-5
-    )
+    gout = torch.autograd.grad(out.pow(2).sum(), x)[0]
+    assert bool(torch.isfinite(out).all()) and bool(torch.isfinite(gout).all())
+    assert float((ref - out).abs().max()) < 1e-6 * float(ref.abs().max())
+    assert float((gref - gout).abs().max()) < 1e-5 * float(gref.abs().max())
 
 
 @needs_mps
@@ -744,7 +749,7 @@ def test_weight_map_refuses_a_map_that_is_not_one_weight_per_entry():
 
     w = torch.nn.Parameter(torch.ones(3, dtype=torch.float64))
     with pytest.raises(NotImplementedError, match='one weight times a constant'):
-        _weight_map(None, w, lambda: torch.stack([w[0] * w[1], w[2]]))
+        _weight_map(w, lambda: torch.stack([w[0] * w[1], w[2]]))
 
 
 @needs_mps
@@ -781,6 +786,24 @@ def test_second_derivatives_raise_in_the_linear_kernel():
         RuntimeError, match='linear and gate layers have first derivatives only'
     ):
         torch.autograd.grad(lin(x).pow(2).sum(), x, create_graph=True)
+
+
+@needs_mps
+def test_second_derivatives_raise_in_the_gate_kernel():
+    from sevenn.nn import mps_opt
+
+    gate = (
+        Gate('2x0e', [torch.nn.functional.silu], '1x0e', [torch.tanh], '1x1o')
+        .to('mps')
+        .eval()
+    )
+    gate._tables = mps_opt._gate_tables(gate, 'mps')
+    gate.__class__ = mps_opt.FusedGate
+    x = torch.randn(5, gate.irreps_in.dim, device='mps', requires_grad=True)
+    with pytest.raises(
+        RuntimeError, match='linear and gate layers have first derivatives only'
+    ):
+        torch.autograd.grad(gate(x).pow(2).sum(), x, create_graph=True)
 
 
 @needs_mps
@@ -1360,6 +1383,30 @@ def test_type_index_must_be_int32():
     assert CsrApply.apply(x, M, torch.ones(4, dtype=torch.int32, device='mps')).shape
 
 
+def _record_enable_and_padding(monkeypatch):
+    """Record the reports of mps_opt.enable and the edge counts of padded batches,
+    without changing what either returns."""
+    from sevenn.nn import mps_opt
+
+    reports, padded = [], []
+    enable, padder = mps_opt.enable, mps_opt.BatchPadder
+
+    def record(model, *a, **kw):
+        rep = enable(model, *a, **kw)
+        reports.append(rep)
+        return rep
+
+    class Recording(padder):
+        def __call__(self, batch):
+            out = super().__call__(batch)
+            padded.append(int(out[KEY.EDGE_IDX].shape[1]))
+            return out
+
+    monkeypatch.setattr(mps_opt, 'enable', record)
+    monkeypatch.setattr(mps_opt, 'BatchPadder', Recording)
+    return reports, padded
+
+
 @needs_mps
 @pytest.mark.parametrize('opt', ['fused', 'off', 'flag'])
 def test_sevenn_inference_on_the_apple_gpu(opt, tmp_path, monkeypatch):
@@ -1373,9 +1420,7 @@ def test_sevenn_inference_on_the_apple_gpu(opt, tmp_path, monkeypatch):
         monkeypatch.setenv('SEVENNET_ENABLE_MPS', '0')
     else:
         monkeypatch.delenv('SEVENNET_ENABLE_MPS', raising=False)
-    reports = []
-    enable = mps_opt.enable
-    monkeypatch.setattr(mps_opt, 'enable', lambda m: reports.append(enable(m)))
+    reports, padded = _record_enable_and_padding(monkeypatch)
     out = tmp_path / 'inference_results'
     device = ['--enable_mps'] if opt == 'flag' else ['--device', 'mps']
     argv = ['sevenn_inference', '--output', str(out), '--batch', '2', *device,
@@ -1392,8 +1437,9 @@ def test_sevenn_inference_on_the_apple_gpu(opt, tmp_path, monkeypatch):
     if opt != 'off':
         assert len(reports) == 1 and reports[0]['conv_fused'] > 0
         assert reports[0]['conv_e3nn'] == 0
+        assert padded and all(n % 256 == 0 for n in padded)
     else:
-        assert not reports
+        assert not reports and not padded
 
 
 @pytest.mark.parametrize(
@@ -1404,12 +1450,14 @@ def test_sevenn_inference_on_the_apple_gpu(opt, tmp_path, monkeypatch):
         (['train', '-mps', '-cueq', 'input.yaml'], 'cannot be combined'),
     ],
 )
-def test_enable_mps_flag_refuses_other_backends(argv, message, tmp_path):
+def test_enable_mps_flag_refuses_other_backends(
+    argv, message, tmp_path, monkeypatch
+):
     from unittest import mock
 
     from sevenn.main.sevenn import main as sevenn_main
 
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
     with mock.patch('sys.argv', ['sevenn'] + argv):
         with pytest.raises(ValueError, match=message):
             sevenn_main()
@@ -1426,9 +1474,7 @@ def test_sevenn_train_with_enable_mps(tmp_path, monkeypatch):
     from sevenn.nn import mps_opt
 
     monkeypatch.delenv('SEVENNET_ENABLE_MPS', raising=False)
-    reports = []
-    enable = mps_opt.enable
-    monkeypatch.setattr(mps_opt, 'enable', lambda m: reports.append(enable(m)))
+    reports, padded = _record_enable_and_padding(monkeypatch)
     root = Path(__file__).parents[2]
     data = str(root / 'tests' / 'data' / 'systems' / 'hfo2.extxyz')
     cfg = yaml.safe_load(open(root / 'sevenn' / 'presets' / 'base.yaml'))
@@ -1443,6 +1489,7 @@ def test_sevenn_train_with_enable_mps(tmp_path, monkeypatch):
     with mock.patch('sys.argv', argv):
         sevenn_main()
     assert len(reports) == 1 and reports[0]['conv_fused'] > 0
+    assert padded and all(n % 256 == 0 for n in padded)
     ckpt = torch.load(tmp_path / 'checkpoint_best.pth', weights_only=False)
     assert ckpt['config']['device'] == 'mps'
 
@@ -1599,3 +1646,49 @@ def test_padder_is_off_when_a_convolution_stays_on_e3nn():
     conv.__class__ = mps_opt.IrrepsConvolution
     with pytest.warns(UserWarning, match='edge padding of batches disabled'):
         assert mps_opt.BatchPadder(model).bucket == 0
+
+
+def test_calculator_keeps_the_positional_arguments_of_upstream():
+    import inspect
+
+    names = list(inspect.signature(SevenNetCalculator.__init__).parameters)
+    upstream = [
+        'self', 'model', 'file_type', 'device', 'modal', 'enable_cueq',
+        'enable_flash', 'enable_oeq', 'enable_lunatp', 'compute_atomic_virial',
+        'sevennet_config',
+    ]  # fmt: skip
+    assert names[: len(upstream)] == upstream
+
+
+@needs_mps
+@pytest.mark.parametrize('modal', ['R2SCAN', 'PBE'])
+def test_multi_fidelity_model_equals_e3nn(modal):
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.rattle(0.05, seed=3)
+    res = {}
+    for opt in (True, False):
+        calc = SevenNetCalculator(
+            '7net-mf-0', device='mps', modal=modal, enable_mps=opt
+        )
+        if opt:
+            assert calc.mps_runtime.report['conv_fused'] > 0
+        a = at.copy()
+        a.calc = calc
+        res[opt] = (a.get_potential_energy(), a.get_forces(), a.get_stress())
+    assert abs(res[True][0] - res[False][0]) < 1e-4
+    assert np.abs(res[True][1] - res[False][1]).max() < 1e-4
+    assert np.abs(res[True][2] - res[False][2]).max() < 1e-6
+
+
+@needs_mps
+def test_atomic_virial_equals_the_cpu():
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.rattle(0.05, seed=4)
+    res = {}
+    for dev in ('mps', 'cpu'):
+        a = at.copy()
+        a.calc = SevenNetCalculator('7net-0', device=dev, compute_atomic_virial=True)
+        a.get_potential_energy()
+        res[dev] = np.asarray(a.calc.results['stresses'])
+    assert res['mps'].shape == (len(at), 6)
+    assert np.abs(res['mps'] - res['cpu']).max() < 1e-5

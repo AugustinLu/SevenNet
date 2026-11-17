@@ -98,8 +98,8 @@ def add_args(parser):
         '-mps',
         '--enable_mps',
         help=(
-            'use fused Metal kernels on the Apple GPU (device mps; '
-            'SEVENNET_ENABLE_MPS=0 for e3nn)'
+            'run on the Apple GPU (implies --device mps), with fused Metal '
+            'kernels unless SEVENNET_ENABLE_MPS=0'
         ),
         action='store_true',
     )
@@ -122,7 +122,7 @@ def run(args):
         raise FileExistsError(f'Directory {out} already exists')
 
     device = args.device
-    if args.enable_mps:
+    if args.enable_mps or device.startswith('mps'):
         if (
             args.enable_cueq
             or args.enable_flash
@@ -130,9 +130,10 @@ def run(args):
             or args.enable_lunatp
         ):
             raise ValueError(
-                '--enable_mps runs on the Apple GPU: it cannot be combined with '
-                'cuEquivariance, FlashTP, OpenEquivariance or LunaTP'
+                'the Apple GPU (--enable_mps or --device mps) cannot be combined '
+                'with cuEquivariance, FlashTP, OpenEquivariance or LunaTP'
             )
+    if args.enable_mps:
         if device != 'auto' and not device.startswith('mps'):
             raise ValueError(f'--enable_mps runs on device mps, not {device}')
         if not torch.backends.mps.is_available():

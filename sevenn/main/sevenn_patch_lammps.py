@@ -140,7 +140,10 @@ def run(args):
 def main(args=None):
     ag = argparse.ArgumentParser(description=description)
     add_args(ag)
-    sys.exit(run(ag.parse_args()))
+    args = ag.parse_args()
+    rc = run(args)
+    if args.enable_mps:  # the CUDA patch keeps its exit status of 0
+        sys.exit(rc)
 
 
 if __name__ == '__main__':
