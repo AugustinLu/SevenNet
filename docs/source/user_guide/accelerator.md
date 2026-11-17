@@ -168,7 +168,7 @@ sevenn train input.yaml --enable_mps
 sevenn inference checkpoint_best.pth structures/* --enable_mps
 ```
 Training and `sevenn inference` pad each batch to a multiple of 256 edges with edges the kernels never visit, so results and gradients are those of the unpadded batch. PyTorch compiles and keeps a graph for every new tensor shape on the Apple GPU; without the padding, a shuffled data set brings a new edge count almost every batch and memory grows by about a gigabyte a minute.
-For LAMMPS on a Mac, see [LAMMPS: PyTorch](./lammps_torch.md#apple-gpu-serial).
+For LAMMPS on a Mac, see [LAMMPS: PyTorch](./lammps_torch.md#apple-gpu-serial). Ready-to-run training and LAMMPS examples for Macs are in [`example_inputs_mps/`](https://github.com/MDIL-SNU/SevenNet/tree/main/example_inputs_mps) of the repository.
 
 ### Performance
 One ASE step (energy, forces and stress) on a MacBook Pro with an M5 Pro (16-core GPU), PyTorch 2.15, tetragonal ZrO₂:

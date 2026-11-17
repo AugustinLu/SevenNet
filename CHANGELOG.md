@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Support LunaTP (`enable_lunatp`). LAMMPS through ML-IAP only.
 - Apple GPU support with fused Metal kernels (`device='mps'`, `enable_mps`, `--enable_mps`) for inference and training, and a serial LAMMPS pair style for Apple GPUs (`sevenn patch_lammps --enable_mps`)
 - Shift and scale in float64 are converted to float32 when a model moves to the Apple GPU, which has no float64
+- `example_inputs_mps/`: training and serial LAMMPS examples for Macs with Apple silicon
 - On the Apple GPU, training and `sevenn inference` pad each batch to a multiple of 256 edges, so PyTorch's per-shape graph cache stops growing during training
 
 ### Changed

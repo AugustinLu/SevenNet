@@ -126,6 +126,7 @@ atom_style  atomic
 pair_style  e3gnn
 pair_coeff  * * 7net-0 Hf O
 ```
+A deployed model (`.pt`) cannot be used here. [`example_inputs_mps/md_serial_example`](https://github.com/MDIL-SNU/SevenNet/tree/main/example_inputs_mps/md_serial_example) is the serial example of `example_inputs/` set up this way.
 `modal NAME` before the chemical species selects the fidelity of a multi-fidelity model, e.g. `pair_coeff * * 7net-omni modal mpa Hf O`.
 
 Build LAMMPS with the pair style (no libtorch link is needed):
