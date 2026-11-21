@@ -30,7 +30,7 @@ model = SevenNetModel(model="7net-omni", modal="mpa", enable_oeq=True)
 # or enable_cueq=True or enable_flash=True
 ```
 
-The `device` parameter defaults to `auto` (CUDA if available, otherwise CPU).
+The `device` parameter defaults to `auto` (CUDA if available, otherwise CPU). The Apple GPU kernels (`enable_mps`) are not available through TorchSim yet.
 
 ### Batched MD
 

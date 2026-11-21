@@ -49,6 +49,7 @@ Enable cuEquivariance, flashTP, or OpenEquivariance while training by adding the
 ```bash
 sevenn train input.yaml -s --enable_cueq # or --enable_flash or --enable_oeq
 ```
+On a Mac with Apple silicon, `--enable_mps` trains on the GPU with fused Metal kernels. It uses one GPU and cannot be combined with `-d`.
 
 Please note that `batch_size` in `input.yaml` refers to the per-GPU batch size.
 
@@ -62,6 +63,7 @@ sevenn inference checkpoint_best.pth path_to_my_structures/*
 ```
 
 This will create the `inference_results` directory, where CSV files contain predicted energy, force, stress, and their references (if available).
+`--enable_mps` (or `--device mps`) evaluates on the Apple GPU with fused Metal kernels.
 See `sevenn inference --help` for more information.
 
 

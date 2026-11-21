@@ -66,6 +66,10 @@ For more information about accelerators, follow [here](./accelerator.md)
 from sevenn.calculator import SevenNetCalculator
 calc = SevenNetCalculator(model='7net-0', enable_cueq=True) # or enable_flash=True or enable_oeq=True
 ```
+On a Mac with Apple silicon, `device='mps'` runs the model on the GPU with fused Metal kernels (see [Apple GPU](./accelerator.md#apple-gpu-metal)):
+```python
+calc = SevenNetCalculator(model='7net-0', device='mps')
+```
 
 If you encounter the error `CUDA is not installed or nvcc is not available`, please ensure the `nvcc` compiler is available. Currently, CPU + D3 is not supported.
 
@@ -74,5 +78,5 @@ Various pretrained SevenNet models can be accessed by setting the model variable
 User-trained models can be applied with the ASE calculator. In this case, the `model` parameter should be set to the checkpoint path from training.
 
 :::{tip}
-When 'auto' is passed to the `device` parameter (the default setting), SevenNet utilizes GPU acceleration if available.
+When 'auto' is passed to the `device` parameter (the default setting), SevenNet uses a CUDA GPU if available, and the CPU otherwise. On a Mac, pass `device='mps'` to use the Apple GPU.
 :::

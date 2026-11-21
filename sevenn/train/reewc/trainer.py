@@ -68,6 +68,8 @@ class ReewcTrainer(Trainer):
         for _, batch in enumerate(loader):
             self.optimizer.zero_grad()
             batch = batch.to(self.device, non_blocking=True)
+            if self._pad is not None:  # Apple GPU: few batch shapes
+                batch = self._pad(batch)
             output = self.model(batch)
             if error_recorder is not None:
                 error_recorder.update(output)
@@ -87,6 +89,8 @@ class ReewcTrainer(Trainer):
                 mem_iter = iter(self.memory_loader)
                 mem_batch = next(mem_iter)
             mem_batch = mem_batch.to(self.device, non_blocking=True)
+            if self._pad is not None:
+                mem_batch = self._pad(mem_batch)
             mem_output = self.model(mem_batch)
             if memory_error_recorder is not None:
                 memory_error_recorder.update(mem_output)
