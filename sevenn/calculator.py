@@ -10,6 +10,7 @@ from ase.atoms import Atoms
 from ase.calculators.calculator import Calculator, all_changes
 from ase.calculators.mixing import SumCalculator
 
+import sevenn._enable_mps as _enable_mps
 import sevenn._keys as KEY
 import sevenn.util as util
 from sevenn.atom_graph_data import AtomGraphData
@@ -104,20 +105,12 @@ class SevenNetCalculator(Calculator):
         enable_flash = os.getenv('SEVENNET_ENABLE_FLASH') == '1' or enable_flash
         enable_oeq = os.getenv('SEVENNET_ENABLE_OEQ') == '1' or enable_oeq
         enable_lunatp = os.getenv('SEVENNET_ENABLE_LUNATP') == '1' or enable_lunatp
-        if enable_mps is not None and not isinstance(enable_mps, bool):
-            raise ValueError(
-                f'enable_mps must be True, False or None, got {enable_mps!r}'
-            )
+        # before any checkpoint is loaded
+        enable_mps, device = _enable_mps.resolve(enable_mps, device)
         if enable_mps is None and os.getenv('SEVENNET_ENABLE_MPS') == '0':
             enable_mps = False
-        if enable_mps and isinstance(device, str) and device == 'auto':
-            device = 'mps'
-        on_mps = not (isinstance(device, str) and device == 'auto') and (
-            torch.device(device).type == 'mps'
-        )
+        on_mps = _enable_mps.device_type(device) == 'mps'
         use_mps = enable_mps if enable_mps is not None else on_mps
-        if enable_mps and not on_mps:  # before any checkpoint is loaded
-            raise ValueError(f"enable_mps=True needs device='mps', got {device}")
 
         if not (
             enable_cueq or enable_flash or enable_oeq or enable_lunatp or use_mps
@@ -143,10 +136,12 @@ class SevenNetCalculator(Calculator):
             )
             enable_lunatp = False
 
-        if use_mps and (enable_cueq or enable_flash or enable_oeq or enable_lunatp):
-            raise ValueError(
-                'enable_mps runs on the Apple GPU: it cannot be combined with '
-                'cuEquivariance, FlashTP, OpenEquivariance or LunaTP'
+        if use_mps:
+            _enable_mps.conflicts(
+                enable_cueq=enable_cueq,
+                enable_flash=enable_flash,
+                enable_oeq=enable_oeq,
+                enable_lunatp=enable_lunatp,
             )
 
         if isinstance(device, str):  # TODO: do we really need this?
@@ -220,7 +215,7 @@ class SevenNetCalculator(Calculator):
         self.model.to(self.device)
         self.model.eval()
         self.mps_runtime = None
-        if enable_mps or self.device.type == 'mps':
+        if enable_mps or _enable_mps.device_type(self.device) == 'mps':
             from sevenn.nn.mps_opt import MpsRuntime
 
             self.mps_runtime = MpsRuntime.for_calculator(

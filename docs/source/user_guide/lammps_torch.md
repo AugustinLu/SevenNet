@@ -138,9 +138,9 @@ cmake ../cmake -DBUILD_MPI=no -DBUILD_OMP=no && make -j 8
 ```
 Or, without building LAMMPS, as a plugin for `pip install lammps mpich`:
 ```bash
-sh $(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps/build_plugin.sh python
-export LAMMPS_PLUGIN_PATH=$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps
-lmp -in in.lammps
+sh "$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps/build_plugin.sh" python
+export LAMMPS_PLUGIN_PATH="$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps"
+lmp -in in.lmp
 ```
 
 LAMMPS runs SevenNet in the Python environment that ran `patch_lammps` or `build_plugin.sh`. `SEVENN_PYTHON` and `SEVENN_ROOT` override that environment and the SevenNet directory. `--enable_flash`, `--enable_oeq` and `--d3` need CUDA and cannot be combined with `--enable_mps`. Per-atom energies are available; per-atom stress is not. `sevenn.lammps_external` gives the same calculation through `fix external` for runs driven from Python.

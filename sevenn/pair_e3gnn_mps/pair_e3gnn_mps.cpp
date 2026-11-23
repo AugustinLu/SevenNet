@@ -103,13 +103,20 @@ void PairE3GNNMps::coeff(int narg, char **arg) {
   start_python(error);
   PythonLock lock;
   PyObject *args = PyList_New(narg - 2);
-  for (int i = 2; i < narg; i++) PyList_SET_ITEM(args, i - 2, PyUnicode_FromString(arg[i]));
-  PyObject *box = box_tuple(domain);
-  PyObject *module = import_driver();
+  for (int i = 2; args && i < narg; i++) {
+    PyObject *word = PyUnicode_FromString(arg[i]);
+    if (!word) {
+      Py_CLEAR(args);
+      break;
+    }
+    PyList_SET_ITEM(args, i - 2, word);  // steals the reference
+  }
+  PyObject *box = args ? box_tuple(domain) : nullptr;
+  PyObject *module = box ? import_driver() : nullptr;
   PyObject *made = module ? PyObject_CallMethod(module, "PairDriver", "OiO", args, n, box) : nullptr;
   Py_XDECREF(module);
-  Py_DECREF(box);
-  Py_DECREF(args);
+  Py_XDECREF(box);
+  Py_XDECREF(args);
   if (!made) fail("loading the model");
   driver = made;
 
@@ -168,6 +175,7 @@ void PairE3GNNMps::compute(int eflag, int vflag) {
     if (!out) fail("computing forces");
     energy = PyFloat_AsDouble(out);
     Py_DECREF(out);
+    if (PyErr_Occurred()) fail("reading the energy");
   }
   if (eflag_global) eng_vdwl += energy;
   if (vflag_global)
@@ -178,7 +186,15 @@ PyObject *PairE3GNNMps::import_driver() {
   PyObject *sys_path = PySys_GetObject("path");
   const char *root = getenv("SEVENN_ROOT");
   PyObject *where = PyUnicode_FromString(root ? root : SEVENN_DEFAULT_ROOT);
-  PyList_Insert(sys_path, 0, where);
+  if (!sys_path || !where) {
+    Py_XDECREF(where);
+    return nullptr;
+  }
+  const int present = PySequence_Contains(sys_path, where);
+  if (present < 0 || (present == 0 && PyList_Insert(sys_path, 0, where) < 0)) {
+    Py_DECREF(where);
+    return nullptr;
+  }
   Py_DECREF(where);
   return PyImport_ImportModule("sevenn.lammps_pair");
 }
@@ -190,9 +206,11 @@ void PairE3GNNMps::fail(const char *what) {
   std::string text = "unknown";
   PyObject *str = value ? PyObject_Str(value) : nullptr;
   if (str) {
-    text = PyUnicode_AsUTF8(str);
+    const char *utf8 = PyUnicode_AsUTF8(str);
+    if (utf8) text = utf8;
     Py_DECREF(str);
   }
+  PyErr_Clear();  // a failure while formatting must not hide the original error
   PyErr_Display(type, value, traceback);
   Py_XDECREF(type);
   Py_XDECREF(value);

@@ -7,6 +7,7 @@ import torch
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
+import sevenn._enable_mps as _enable_mps
 import sevenn._keys as KEY
 import sevenn.util as util
 from sevenn.atom_graph_data import AtomGraphData
@@ -183,6 +184,16 @@ def inference(
             at once, it will not work smoothly with data_kwargs
 
     """
+    # the Apple GPU options, before any work (the rules of the calculator)
+    enable_mps, device = _enable_mps.resolve(enable_mps, device)
+    on_mps = _enable_mps.device_type(device) == 'mps'
+    if on_mps and _enable_mps.wanted(enable_mps):
+        _enable_mps.conflicts(
+            enable_cueq=enable_cueq,
+            enable_flash=enable_flash,
+            enable_oeq=enable_oeq,
+            enable_lunatp=enable_lunatp,
+        )
     # TODO: False as default, priority?
     model, _ = util.model_from_checkpoint(
         checkpoint,
@@ -241,19 +252,14 @@ def inference(
     model.to(device)
     model.set_is_batch_data(True)
     model.eval()
-    on_mps = torch.device(device).type == 'mps'
-    if enable_mps and not on_mps:
-        raise ValueError(f"enable_mps=True needs device 'mps', got {device}")
     pad = None
     if on_mps:
         # Apple GPU: fused Metal kernels, as in the calculator
         from sevenn.nn.mps_opt import check_torch, enable_or_warn
 
         check_torch('inference')
-        if enable_mps is None:
-            enable_mps = os.environ.get('SEVENNET_ENABLE_MPS') != '0'
-        if enable_mps:
-            if enable_or_warn(model, 'inference') is not None:
+        if _enable_mps.wanted(enable_mps):
+            if enable_or_warn(model, 'inference', strict=bool(enable_mps)):
                 from sevenn.nn.mps_opt import BatchPadder
 
                 pad = BatchPadder(model)
@@ -265,7 +271,7 @@ def inference(
         batch = batch.to(device)
         if pad is not None:  # few shapes on the Apple GPU (see BatchPadder)
             n_real = int(batch[KEY.EDGE_IDX].shape[1])
-            output = pad.unpad(model(pad(batch)), n_real).detach().cpu()
+            output = pad.unpad(pad.run(model, batch), n_real).detach().cpu()
         else:
             output = model(batch).detach().cpu()
         rec.update(output)

@@ -9,6 +9,7 @@ import torch.nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
+import sevenn._enable_mps as _enable_mps
 import sevenn._keys as KEY
 from sevenn.error_recorder import ErrorRecorder
 from sevenn.train.loss import LossDefinition
@@ -51,6 +52,8 @@ class Trainer:
         distributed_backend: str = 'nccl',
         enable_mps: Optional[bool] = None,
     ) -> None:
+        # before any work, as in the calculator: True with 'auto' selects 'mps'
+        enable_mps, device = _enable_mps.resolve(enable_mps, device)
         if device == 'auto':
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             if distributed_backend == 'mpi':
@@ -76,21 +79,20 @@ class Trainer:
         self.device = torch.device(device)
         self.distributed = distributed
         self._pad = None
-        if enable_mps and self.device.type != 'mps':
-            raise ValueError(f"enable_mps=True needs device 'mps', got {device}")
-        if enable_mps is None:
-            enable_mps = os.environ.get('SEVENNET_ENABLE_MPS') != '0'
         if self.device.type == 'mps':
             # Apple GPU: fused kernels in training and validation
-            from sevenn.nn.mps_opt import check_torch, enable_or_warn
+            from sevenn.nn.mps_opt import check_torch, disable, enable_or_warn
 
             check_torch('training')
-            if enable_mps:
-                if enable_or_warn(self.model, 'training') is not None:
+            _model = self.model.module if distributed else self.model
+            if _enable_mps.wanted(enable_mps):
+                if enable_or_warn(_model, 'training', strict=bool(enable_mps)):
                     # few batch shapes, or the MPS graph cache grows without bound
                     from sevenn.nn.mps_opt import BatchPadder
 
-                    self._pad = BatchPadder(self.model)
+                    self._pad = BatchPadder(_model)
+            else:
+                disable(_model)  # a model may come fused: off means the e3nn code
 
         optimizer_args = optimizer_args or {}
         param = [p for p in self.model.parameters() if p.requires_grad]
@@ -188,9 +190,10 @@ class Trainer:
             if is_train:
                 self.optimizer.zero_grad()
             batch = batch.to(self.device, non_blocking=True)
-            if self._pad is not None:
-                batch = self._pad(batch)
-            output = self.model(batch)
+            if self._pad is not None:  # Apple GPU: few batch shapes
+                output = self._pad.run(self.model, batch)
+            else:
+                output = self.model(batch)
             if error_recorder is not None:
                 error_recorder.update(output, model=_model)
             if is_train:
@@ -225,9 +228,10 @@ class Trainer:
         self.model.train()
         self.optimizer.zero_grad()
         batch = batch.to(self.device, non_blocking=True)
-        if self._pad is not None:
-            batch = self._pad(batch)
-        output = self.model(batch)
+        if self._pad is not None:  # Apple GPU: few batch shapes
+            output = self._pad.run(self.model, batch)
+        else:
+            output = self.model(batch)
         _model = self.model if not self.distributed else self.model.module
 
         if error_recorder is not None:

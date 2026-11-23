@@ -72,15 +72,14 @@ class PairDriver:
                 f'e3gnn: not enough elements in pair_coeff: {ntypes} atom types, '
                 f'got {opt["symbols"]}'
             )
-        self.base = SevenNetCalculator(path, device='mps', modal=opt['modal'])
-        known = set(self.base.type_map)
+        self.calc = SevenNetCalculator(path, device='mps', modal=opt['modal'])
+        known = set(self.calc.type_map)
         unknown = [s for s in opt['symbols'] if atomic_numbers.get(s) not in known]
         if unknown:
             raise ValueError(f'e3gnn: elements unknown to this model: {unknown}')
-        self.calc = self.base
         self.numbers = np.array([0] + [atomic_numbers[s] for s in opt['symbols']])
-        self.cutoff = float(self.base.cutoff)
-        rt = self.base.mps_runtime
+        self.cutoff = float(self.calc.cutoff)
+        rt = self.calc.mps_runtime
         fused = rt is not None and rt.mode == 'fused'
         run = rt.report if fused else 'reference code'
         self.banner = (

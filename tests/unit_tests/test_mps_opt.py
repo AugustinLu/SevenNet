@@ -178,7 +178,8 @@ def test_large_radial_weights_only_matter_with_a_convolution_on_e3nn():
 def test_cuda_and_cpu_paths_do_not_import_the_apple_code():
     code = (
         'import sys, numpy, sevenn.calculator, sevenn.model_build, '
-        'sevenn.checkpoint, sevenn.scripts.deploy\n'
+        'sevenn.checkpoint, sevenn.scripts.deploy, sevenn.train.trainer, '
+        'sevenn.scripts.inference\n'
         "assert not [m for m in sys.modules if m.startswith('sevenn.nn.mps')]\n"
     )
     subprocess.run([sys.executable, '-c', code], check=True)
@@ -1692,3 +1693,92 @@ def test_atomic_virial_equals_the_cpu():
         res[dev] = np.asarray(a.calc.results['stresses'])
     assert res['mps'].shape == (len(at), 6)
     assert np.abs(res['mps'] - res['cpu']).max() < 1e-5
+
+
+def test_enable_mps_rules_are_shared_and_import_no_apple_code():
+    from sevenn import _enable_mps as rules
+
+    assert rules.device_type(0) is None and rules.device_type(None) is None
+    assert rules.device_type('auto') is None and rules.device_type('mps:0') == 'mps'
+    assert rules.resolve(True, 'auto') == (True, 'mps')
+    assert rules.resolve(None, 'auto') == (None, 'auto')
+    with pytest.raises(ValueError, match='True, False or None'):
+        rules.resolve('no', 'mps')
+    with pytest.raises(ValueError, match="needs device='mps'"):
+        rules.resolve(True, 'cpu')
+    with pytest.raises(ValueError, match='cannot be combined'):
+        rules.conflicts(enable_cueq=False, enable_flash=True)
+
+
+def test_calculator_passes_other_device_arguments_through():
+    # upstream passed None (and CUDA ordinals) on to Module.to unchanged
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.calc = SevenNetCalculator(
+        _build(_config()), file_type='model_instance', device=None
+    )
+    assert np.isfinite(at.get_potential_energy())
+
+
+def test_python_inference_checks_the_apple_options_before_loading(tmp_path):
+    from sevenn.scripts.inference import inference
+
+    # the checkpoint does not exist: the options are refused before any loading
+    with pytest.raises(ValueError, match='cannot be combined'):
+        inference('missing.pth', [], str(tmp_path), device='mps', enable_flash=True)
+    with pytest.raises(ValueError, match="needs device='mps'"):
+        inference('missing.pth', [], str(tmp_path), device='cpu', enable_mps=True)
+
+
+def test_trainer_enable_mps_argument(monkeypatch):
+    from sevenn.nn import mps_opt
+    from sevenn.train.trainer import Trainer
+
+    with pytest.raises(ValueError, match='True, False or None'):
+        Trainer(_build(_config()), [], torch.optim.Adam, enable_mps='no')
+    if not (torch.backends.mps.is_available() and mps_torch_supported()):
+        return
+
+    def fused(tr):
+        conv = mps_opt.FusedConvolution
+        return any(isinstance(m, conv) for m in tr.model.modules())
+
+    monkeypatch.setenv('SEVENNET_ENABLE_MPS', '0')
+    tr = Trainer(_build(_config()), [], torch.optim.Adam, enable_mps=True)
+    assert tr.device.type == 'mps' and fused(tr)  # 'auto' selects the Apple GPU
+    tr = Trainer(tr.model, [], torch.optim.Adam, device='mps', enable_mps=False)
+    assert not fused(tr)  # a fused model goes back to the e3nn code
+
+
+@needs_mps
+def test_ewc_state_in_float64_moves_to_the_apple_gpu():
+    from sevenn.train.reewc.loss import EWCLoss
+
+    f64 = {'w': torch.ones(3, dtype=torch.float64)}
+    loss = EWCLoss(dict(f64), dict(f64), device='mps')
+    assert loss.fisher_dict['w'].dtype == torch.float32
+    assert loss.opt_params_dict['w'].device.type == 'mps'
+    assert EWCLoss(dict(f64), dict(f64), device='cpu').fisher_dict['w'].dtype == (
+        torch.float64
+    )
+
+
+@needs_mps
+def test_batch_padder_clears_its_note_when_a_call_fails():
+    from sevenn.nn import mps_opt
+
+    model = _build(_config()).to('mps')
+    mps_opt.enable(model)
+    model.set_is_batch_data(True)
+    pad = mps_opt.BatchPadder(model, bucket=64)
+
+    def boom(batch):
+        assert pad.plan.expect_padded is not None
+        raise RuntimeError('failed before the first convolution')
+
+    with pytest.raises(RuntimeError, match='failed before'):
+        pad.run(boom, _batch().to('mps'))
+    assert pad.plan.expect_padded is None
+    with torch.autocast('mps', dtype=torch.float16):
+        b = _batch().to('mps')
+        n = int(b[KEY.EDGE_IDX].shape[1])
+        assert int(pad(b)[KEY.EDGE_IDX].shape[1]) == n  # no padding under autocast

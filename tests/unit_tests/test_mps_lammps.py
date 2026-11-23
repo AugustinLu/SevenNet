@@ -175,12 +175,16 @@ def test_pair_style_refuses_include_and_hybrid(tmp_path, case):
         lines += [
             'pair_style hybrid e3gnn zero 5.0',
             'pair_coeff * * e3gnn 7net-0 Na Cl',
-            'pair_coeff * * zero',
+            'pair_coeff 1 1 zero',  # both sub-styles in use: the check is ours
         ]
     lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
     for line in lines:
         lmp.command(line)
-    message = 'neigh_modify include' if case == 'include' else 'hybrid'
+    message = (
+        'neigh_modify include'
+        if case == 'include'
+        else 'cannot be a sub-style of pair_style hybrid'
+    )
     with pytest.raises(Exception, match=message):
         lmp.command('run 0')
     lmp.close()
@@ -408,7 +412,11 @@ def test_patch_lammps_reports_failure():
     assert p.returncode != 0
 
 
-def test_external_bridge_stops_when_the_calculator_fails(tmp_path):
+@pytest.mark.parametrize(
+    'mode, message',
+    [('raise', 'model failed'), ('bad_shape', 'forces of shape')],
+)
+def test_external_bridge_stops_when_the_calculator_fails(tmp_path, mode, message):
     lammps = pytest.importorskip('lammps')
     from ase.calculators.calculator import Calculator, all_changes
     from ase.io import write
@@ -422,11 +430,12 @@ def test_external_bridge_stops_when_the_calculator_fails(tmp_path):
         def calculate(self, atoms=None, properties=None, system_changes=all_changes):
             super().calculate(atoms, properties, system_changes)
             Failing.calls += 1
+            forces = np.zeros((len(atoms), 3))
             if Failing.calls == 3:
-                raise RuntimeError('model failed')
-            self.results = dict(
-                energy=0.0, forces=np.zeros((len(atoms), 3)), stress=np.zeros(6)
-            )
+                if mode == 'raise':
+                    raise RuntimeError('model failed')
+                forces = np.zeros((len(atoms), 2))  # fails when published
+            self.results = dict(energy=0.0, forces=forces, stress=np.zeros(6))
 
     at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
     write(
@@ -453,7 +462,48 @@ run 20
 print "not reached"
 """)
     lmp = lammps.lammps(cmdargs=['-screen', 'none', '-log', 'none'])
-    with pytest.raises(RuntimeError, match='model failed'):
+    with pytest.raises(RuntimeError, match=message):
         run_input(lmp, str(inp), Failing(), ['Na', 'Cl'])
     assert lmp.extract_global('ntimestep') < 5 and Failing.calls == 3
     lmp.close()
+
+
+@needs_mps
+@needs_plugin
+def test_pair_style_pressure_tensor_on_a_tilted_cell(tmp_path):
+    from ase import Atoms
+
+    at = bulk('NaCl', 'rocksalt', a=5.63, cubic=True)
+    at.set_cell(at.cell + [[0, 0, 0], [0.7, 0, 0], [0.4, -0.3, 0]], scale_atoms=True)
+    at.rattle(0.05, seed=6)
+    lmp = _pair_lammps(tmp_path, at, '7net-0 Na Cl')
+    lmp.command('thermo_style custom step pe pxx pyy pzz pxy pxz pyz')
+    calc = SevenNetCalculator('7net-0', device='mps')
+
+    def in_lammps_frame():
+        # the structure as the pair style sees it: LAMMPS's frame, after any motion
+        lo, hi, xy, yz, xz, _, _ = lmp.extract_box()
+        ids = lmp.numpy.extract_atom('id')[: len(at)].copy()
+        order = np.argsort(ids)
+        x = lmp.numpy.extract_atom('x')[: len(at)].copy()[order]
+        a, b, c = (hi[k] - lo[k] for k in range(3))
+        cell = [[a, 0, 0], [xy, b, 0], [xz, yz, c]]
+        ref = Atoms(at.get_chemical_symbols(), positions=x, cell=cell, pbc=True)
+        ref.calc = calc
+        return ref, lmp.numpy.extract_atom('f')[: len(at)].copy()[order]
+
+    lmp.command('run 0')
+    press = [lmp.get_thermo(k) for k in ('pxx', 'pyy', 'pzz', 'pxy', 'pxz', 'pyz')]
+    ref, _ = in_lammps_frame()
+    s = ref.get_stress(voigt=True) * 1602176.634  # xx yy zz yz xz xy, bar
+    want = [-s[0], -s[1], -s[2], -s[5], -s[4], -s[3]]
+    assert abs(want[3]) > 10.0  # a real shear component
+    assert np.abs(np.array(press) - np.array(want)).max() < 2.0
+    # a few MD steps: atoms move, and may leave the box between re-neighbouring
+    for line in ('velocity all create 600 3', 'fix md all nve', 'run 5'):
+        lmp.command(line)
+    pe = lmp.get_thermo('pe')
+    ref, fl = in_lammps_frame()
+    lmp.close()
+    assert abs(pe - ref.get_potential_energy()) < 1e-3
+    assert np.abs(fl - ref.get_forces()).max() < 2e-4

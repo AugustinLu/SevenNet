@@ -69,8 +69,9 @@ class ReewcTrainer(Trainer):
             self.optimizer.zero_grad()
             batch = batch.to(self.device, non_blocking=True)
             if self._pad is not None:  # Apple GPU: few batch shapes
-                batch = self._pad(batch)
-            output = self.model(batch)
+                output = self._pad.run(self.model, batch)
+            else:
+                output = self.model(batch)
             if error_recorder is not None:
                 error_recorder.update(output)
             total_loss = torch.tensor([0.0], device=self.device)
@@ -90,8 +91,9 @@ class ReewcTrainer(Trainer):
                 mem_batch = next(mem_iter)
             mem_batch = mem_batch.to(self.device, non_blocking=True)
             if self._pad is not None:
-                mem_batch = self._pad(mem_batch)
-            mem_output = self.model(mem_batch)
+                mem_output = self._pad.run(self.model, mem_batch)
+            else:
+                mem_output = self.model(mem_batch)
             if memory_error_recorder is not None:
                 memory_error_recorder.update(mem_output)
             self.optimizer.zero_grad()

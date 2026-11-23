@@ -784,11 +784,18 @@ def check_torch(purpose: str) -> None:
         )
 
 
-def enable_or_warn(model, purpose: str) -> Optional[Dict[str, int]]:
+def enable_or_warn(
+    model, purpose: str, strict: bool = False
+) -> Optional[Dict[str, int]]:
     """enable() for the Trainer and `sevenn inference` on device='mps', or a warning
     and the e3nn code where this PyTorch cannot compile Metal kernels, as in the
-    calculator."""
+    calculator. strict (an explicit enable_mps=True) makes that an error."""
     if not hasattr(torch.mps, 'compile_shader'):
+        if strict:
+            raise ValueError(
+                f'enable_mps=True is not possible: torch {torch.__version__} has no '
+                f'torch.mps.compile_shader (needs 2.7 or later)'
+            )
         warnings.warn(
             f'{purpose} with the reference e3nn code on the GPU: torch '
             f'{torch.__version__} has no torch.mps.compile_shader'
@@ -927,6 +934,8 @@ class MpsRuntime:
         self.num_edges = graph[KEY.EDGE_IDX].shape[1]
         if self.plan is None:
             return graph
+        if torch.is_autocast_enabled('mps'):  # the convolutions would use e3nn
+            return graph
         graph = pad_edges(graph, self.cutoff, self.bucket)
         self.plan.expect_padded = (self.num_edges, graph[KEY.EDGE_IDX].shape[1])
         return graph
@@ -949,7 +958,7 @@ class BatchPadder:
     PyTorch's MPS backend compiles a graph for every new shape of an operation
     and keeps it for the life of the process. A shuffled data set gives almost
     every batch a new number of edges, so without padding the process grows by
-    about a gigabyte a minute in training. Pad edges are those of pad_edges: atom
+    one to two gigabytes a minute in training. Pad edges are those of pad_edges: atom
     0 to atom 0 with vector (cutoff, 0, 0), placed after the real edges, where the
     kernels never look. Energy, forces, stress and every gradient
     are therefore those of the unpadded batch. Off (bucket 0) when a convolution
@@ -974,8 +983,19 @@ class BatchPadder:
             return
         self.bucket = int(bucket)
 
+    def run(self, model, batch):
+        """model(self(batch)), with the padding note cleared however the call ends:
+        a call that fails before its first convolution must not leave it for the
+        next graph."""
+        try:
+            return model(self(batch))
+        finally:
+            if self.plan is not None:
+                self.plan.expect_padded = None
+
     def __call__(self, batch):
-        if not self.bucket:
+        # under autocast the convolutions fall back to e3nn, which would visit pads
+        if not self.bucket or torch.is_autocast_enabled('mps'):
             return batch
         idx = batch[KEY.EDGE_IDX]
         n_real = int(idx.shape[1])

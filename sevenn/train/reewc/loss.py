@@ -34,10 +34,17 @@ class EWCLoss(LossDefinition):
             self.to(device)
 
     def to(self, device) -> None:
-        self.fisher_dict = {k: v.to(device) for k, v in self.fisher_dict.items()}
-        self.opt_params_dict = {
-            k: v.to(device) for k, v in self.opt_params_dict.items()
-        }
+        # the Apple GPU has no float64: such entries (e.g. shift and scale of
+        # SevenNet 0.13.1) go to float32 there, as the model's own do
+        to_mps = torch.device(device).type == 'mps'
+
+        def move(v):
+            if to_mps and v.dtype == torch.float64:
+                v = v.float()
+            return v.to(device)
+
+        self.fisher_dict = {k: move(v) for k, v in self.fisher_dict.items()}
+        self.opt_params_dict = {k: move(v) for k, v in self.opt_params_dict.items()}
 
     def _check_and_align(self, model: Callable) -> None:
         if len(self.fisher_dict) == 0 or len(self.opt_params_dict) == 0:

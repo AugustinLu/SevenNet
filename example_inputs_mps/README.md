@@ -35,8 +35,8 @@ The log shows `e3gnn on the Apple GPU: 7net-0, ...`.
 
 Or, without building LAMMPS, load the pair style as a plugin into `pip install lammps mpich`:
 ```bash
-sh $(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps/build_plugin.sh python
-export LAMMPS_PLUGIN_PATH=$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps
+sh "$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps/build_plugin.sh" python
+export LAMMPS_PLUGIN_PATH="$(python -c 'import sevenn, os; print(os.path.dirname(sevenn.__file__))')/pair_e3gnn_mps"
 lmp -in in.lmp
 ```
 

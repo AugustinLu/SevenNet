@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file.
 - SevenNet-Nano checkpoints for `7net-nano-4.5`, `7net-nano-5.0`, `7net-nano-5.5`, and `7net-nano-6.0`
 - Support LunaTP (`enable_lunatp`). LAMMPS through ML-IAP only.
 - Apple GPU support with fused Metal kernels (`device='mps'`, `enable_mps`, `--enable_mps`) for inference and training, and a serial LAMMPS pair style for Apple GPUs (`sevenn patch_lammps --enable_mps`)
-- Shift and scale in float64 are converted to float32 when a model moves to the Apple GPU, which has no float64; they stay float32 afterwards, also in checkpoints saved from it
+- Shift and scale in float64 are converted to float32 when a model moves to the Apple GPU, which has no float64; they stay float32 afterwards, also in checkpoints saved from it. The reEWC Fisher information and reference parameters are converted the same way on the Apple GPU
 - `example_inputs_mps/`: training and serial LAMMPS examples for Macs with Apple silicon
 - On the Apple GPU, training and `sevenn inference` pad each batch to a multiple of 256 edges, so far fewer tensor shapes reach PyTorch's per-shape graph cache
 

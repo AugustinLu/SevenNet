@@ -628,9 +628,10 @@ class CsrApply(torch.autograd.Function):
         ctx.M, ctx.types = M, types if types is not None else M.notype
         x = x.contiguous()
         out = x.new_empty((x.shape[0], M.no))
-        _lib(_CSR_SHADER).csr_mm(
-            out, x, *M.fwd, M.bias, ctx.types, M.dfwd, threads=(M.no, x.shape[0])
-        )
+        if x.shape[0] > 0:  # no launch on an empty grid
+            _lib(_CSR_SHADER).csr_mm(
+                out, x, *M.fwd, M.bias, ctx.types, M.dfwd, threads=(M.no, x.shape[0])
+            )
         return out
 
     @staticmethod
@@ -639,15 +640,16 @@ class CsrApply(torch.autograd.Function):
         M = ctx.M
         obar = obar.contiguous()
         xbar = obar.new_empty((obar.shape[0], M.ni))
-        _lib(_CSR_SHADER).csr_mm(
-            xbar,
-            obar,
-            *M.adj,
-            M.zero,
-            ctx.types,
-            M.dadj,
-            threads=(M.ni, obar.shape[0]),
-        )
+        if obar.shape[0] > 0:
+            _lib(_CSR_SHADER).csr_mm(
+                xbar,
+                obar,
+                *M.adj,
+                M.zero,
+                ctx.types,
+                M.dadj,
+                threads=(M.ni, obar.shape[0]),
+            )
         return xbar, None, None
 
 
@@ -718,9 +720,10 @@ class GateApply(torch.autograd.Function):
         ctx.save_for_backward(x)
         ctx.T = T
         out = x.new_empty((x.shape[0], T.nout))
-        _lib(_GATE_SHADER).gate_fwd(
-            out, x, *T.tables, T.dims, threads=(T.nout, x.shape[0])
-        )
+        if x.shape[0] > 0:  # no launch on an empty grid
+            _lib(_GATE_SHADER).gate_fwd(
+                out, x, *T.tables, T.dims, threads=(T.nout, x.shape[0])
+            )
         return out
 
     @staticmethod
@@ -729,7 +732,8 @@ class GateApply(torch.autograd.Function):
         (x,) = ctx.saved_tensors
         T = ctx.T
         xbar = x.new_empty(x.shape)
-        _lib(_GATE_SHADER).gate_adj(
-            xbar, obar.contiguous(), x, *T.tables, T.dims, threads=x.shape[0]
-        )
+        if x.shape[0] > 0:
+            _lib(_GATE_SHADER).gate_adj(
+                xbar, obar.contiguous(), x, *T.tables, T.dims, threads=x.shape[0]
+            )
         return xbar, None
